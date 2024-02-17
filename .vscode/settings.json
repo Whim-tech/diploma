@@ -4,6 +4,7 @@
         "cppcoreguidelines",
         "DWIN",
         "framebuffer",
+        "fullscreen",
         "GLFW",
         "Hostx",
         "Multisample",
@@ -18,6 +19,7 @@
         "Swapchains",
         "swappable",
         "vararg",
+        "VOLK",
         "WERROR"
     ],
     "cmake.copyCompileCommands": "${workspaceFolder}/build/compile_commands.json",
