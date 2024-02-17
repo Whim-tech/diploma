@@ -1,0 +1,112 @@
+{
+	"version": 6,
+	"cmakeMinimumRequired": {
+		"major": 3,
+		"minor": 25,
+		"patch": 0
+	},
+	"configurePresets": [
+		{
+			"name": "msvc",
+			"hidden": true,
+			"cacheVariables": {
+				"CMAKE_C_COMPILER": "cl.exe",
+				"CMAKE_CXX_COMPILER": "cl.exe"
+			},
+			"condition": {
+				"type": "equals",
+				"lhs": "${hostSystemName}",
+				"rhs": "Windows"
+			},
+			"architecture": {
+				"value": "x64",
+				"strategy": "external"
+			}
+		},
+		{
+			"name": "clang",
+			"hidden": true,
+			"cacheVariables": {
+				"CMAKE_C_COMPILER": "clang",
+				"CMAKE_CXX_COMPILER": "clang++"
+			}
+		},
+		{
+			"name": "debug",
+			"hidden": true,
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Debug"
+			}
+		},
+		{
+			"name": "release",
+			"hidden": true,
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release"
+			}
+		},
+		{
+			"name": "ninja",
+			"hidden": true,
+			"generator": "Ninja"
+		},
+		{
+			"name": "msbuild",
+			"hidden": true,
+			"generator": "Visual Studio 17 2022",
+			"toolset": "host=x64",
+			"architecture": "x64",
+			"condition": {
+				"type": "equals",
+				"lhs": "${hostSystemName}",
+				"rhs": "Windows"
+			}
+		},
+		{
+			"name": "msbuild-msvc-debug",
+			"inherits": [
+				"msbuild",
+				"msvc",
+				"debug"
+			],
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "ninja-msvc-debug",
+			"inherits": [
+				"ninja",
+				"msvc",
+				"debug"
+			],
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "ninja-msvc-release",
+			"inherits": [
+				"ninja",
+				"msvc",
+				"release"
+			],
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "ninja-clang-debug",
+			"inherits": [
+				"ninja",
+				"clang",
+				"debug"
+			],
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "ninja-clang-release",
+			"inherits": [
+				"ninja",
+				"clang",
+				"release"
+			],
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		}
+	],
+	"buildPresets": []
+}

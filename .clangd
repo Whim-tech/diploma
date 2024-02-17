@@ -1,0 +1,48 @@
+Diagnostics:
+  UnusedIncludes: Strict
+
+  ClangTidy:
+    Add:
+      [
+        cppcoreguidelines-*,
+        performance-*,
+        bugprone-*,
+        portability-*,
+        modernize-*,
+        google-*,
+        readability-identifier-naming,
+      ]
+    Remove:
+      [
+        modernize-use-trailing-return-type*,
+        modernize-use-auto,
+        google-readability-todo,
+        google-readability-casting,
+        google-readability-braces-around-statements,
+        bugprone-easily-swappable-parameters,
+        bugprone-narrowing-conversions,
+        cppcoreguidelines-narrowing-conversions,
+        cppcoreguidelines-pro-bounds-constant-array-index,
+        cppcoreguidelines-pro-type-vararg,
+        cppcoreguidelines-avoid-magic-numbers*,
+        cppcoreguidelines-pro-type-union-access,
+        cppcoreguidelines-avoid-do-while,
+        modernize-use-using,
+        cppcoreguidelines-prefer-member-initializer,
+        cppcoreguidelines-pro-type-cstyle-cast,
+        modernize-use-nodiscard
+      ]
+
+    CheckOptions:
+      readability-identifier-naming.NamespaceCase: lower_case
+      readability-identifier-naming.ClassCase: CamelCase
+      readability-identifier-naming.PrivateMemberPrefix: m_
+      readability-identifier-naming.StructCase: lower_case
+      readability-identifier-naming.FunctionCase: lower_case
+      readability-identifier-naming.VariableCase: lower_case
+
+Hover:
+  ShowAKA: Yes
+
+CompileFlags:
+  Add: '-std:c++20'

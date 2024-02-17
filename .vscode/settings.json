@@ -1,0 +1,34 @@
+{
+    "cSpell.words": [
+        "bugprone",
+        "cppcoreguidelines",
+        "DWIN",
+        "framebuffer",
+        "GLFW",
+        "Hostx",
+        "Multisample",
+        "nologo",
+        "raytracing",
+        "SFLOAT",
+        "sptr",
+        "subpass",
+        "Subpasses",
+        "subresource",
+        "Swapchain",
+        "Swapchains",
+        "swappable",
+        "vararg",
+        "WERROR"
+    ],
+    "cmake.copyCompileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build"
+    ],
+    "cmake.languageSupport.enableFileAPI": true,
+    "[cpp]": {
+        "editor.tabSize": 2
+    },
+    "cmake.debugConfig": {
+        "console": "integratedTerminal"
+    },
+}
