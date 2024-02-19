@@ -1,3 +1,4 @@
+#include "vk/renderer.hpp"
 #define VOLK_IMPLEMENTATION
 #include <Volk/volk.h>
 
@@ -25,16 +26,19 @@ int main() {
     .options = {
       .is_resizable = false,
       .is_fullscreen = false,
+      .raytracing_enabled = false
     }
   };
 
-  whim::Window      w{ config };
-  whim::vk::Context context{ config, w };
+  whim::Window       w{ config };
+  whim::vk::Context  context{ config, w };
+  whim::vk::Renderer renderer{ context };
 
   w.run([&]() {
     if (glfwGetKey(w.handle(), GLFW_KEY_ESCAPE) == GLFW_PRESS) {
       w.close();
     }
+    renderer.draw();
   });
 
   return 0;

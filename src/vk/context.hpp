@@ -15,13 +15,24 @@
 
 namespace whim::vk {
 
+struct swapchain_frame_t {
+  VkImage     image      = VK_NULL_HANDLE;
+  VkImageView image_view = VK_NULL_HANDLE;
+
+  struct depth_t {
+    VkImage       image      = VK_NULL_HANDLE;
+    VkImageView   image_view = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+  } depth;
+};
+
 class Context {
 
 public:
   // TODO: add options to specify which device we want to choose
   Context(config_t const &config, Window const &window);
   // TODO: add more nice way for COntext creation:
-  // for example: context_builder.add_deivice_extention(...)
+  // for example: context_builder.add_device_extention(...)
   //                .add_instance_extension(...)
   //                .enable_instance_layer(...)
   ~Context();
@@ -46,13 +57,13 @@ public:
   [[nodiscard]] VkCommandPool command_pool() const;
   [[nodiscard]] VmaAllocator  vma_allocator() const;
 
-  [[nodiscard]] VkSwapchainKHR           swapchain() const;
-  [[nodiscard]] std::vector<VkImage>     swapchain_images() const;
-  [[nodiscard]] std::vector<VkImageView> swapchain_image_views() const;
-  [[nodiscard]] VkPresentModeKHR         swapchain_present_mode() const;
-  [[nodiscard]] VkFormat                 swapchain_image_format() const;
-  [[nodiscard]] VkExtent2D               swapchain_extent() const;
-  [[nodiscard]] u32                      swapchain_image_count() const;
+  [[nodiscard]] VkSwapchainKHR                        swapchain() const;
+  [[nodiscard]] std::vector<swapchain_frame_t> const &swapchain_frames() const;
+  [[nodiscard]] VkPresentModeKHR                      swapchain_present_mode() const;
+  [[nodiscard]] VkFormat                              swapchain_image_format() const;
+  [[nodiscard]] VkFormat                              swapchain_depth_format() const;
+  [[nodiscard]] VkExtent2D                            swapchain_extent() const;
+  [[nodiscard]] u32                                   swapchain_image_count() const;
 
   [[nodiscard]] GLFWwindow* window();
 
@@ -95,14 +106,16 @@ private:
   handle<VkCommandPool> m_command_pool = VK_NULL_HANDLE;
 
   struct swapchain_t {
-    handle<VkSwapchainKHR>   handle       = VK_NULL_HANDLE;
-    std::vector<VkImage>     images       = {};
-    std::vector<VkImageView> image_views  = {};
-    VkPresentModeKHR         present_mode = {};
-    VkFormat                 image_format = {};
-    VkExtent2D               extent       = {};
-    u32                      image_count  = 0;
+    handle<VkSwapchainKHR> handle       = VK_NULL_HANDLE;
+    VkPresentModeKHR       present_mode = {};
+    VkFormat               image_format = {};
+    // FIXME: remove this hardcoded format
+    VkFormat   depth_format = VK_FORMAT_D32_SFLOAT;
+    VkExtent2D extent       = {};
+    u32        image_count  = 0;
   } m_swapchain;
+
+  std::vector<swapchain_frame_t> m_frames{};
 
   cref<Window> m_window_ref;
 };
