@@ -1,11 +1,17 @@
 #include "vk/renderer.hpp"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <vulkan/vulkan_core.h>
 
 #include "vk/context.hpp"
 #include "vk/result.hpp"
+
+#define VK_NO_PROTOTYPES
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_vulkan.h"
+#include "imgui/imgui_impl_glfw.h"
 
 namespace whim::vk {
 
@@ -226,6 +232,79 @@ Renderer::Renderer(Context &context) :
 
   vkDestroyShaderModule(context.device(), vertex_module, nullptr);
   vkDestroyShaderModule(context.device(), fragment_module, nullptr);
+
+  std::array<VkDescriptorPoolSize, 11> pool_sizes = {
+    VkDescriptorPoolSize{               VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+    VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+    VkDescriptorPoolSize{         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+    VkDescriptorPoolSize{         VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+    VkDescriptorPoolSize{  VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+    VkDescriptorPoolSize{  VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+    VkDescriptorPoolSize{        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+    VkDescriptorPoolSize{        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+    VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+    VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+    VkDescriptorPoolSize{      VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}
+  };
+
+  VkDescriptorPoolCreateInfo imgui_pool_info = {};
+  imgui_pool_info.sType                      = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  imgui_pool_info.flags                      = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  imgui_pool_info.maxSets                    = 1000;
+  imgui_pool_info.poolSizeCount              = (uint32_t) std::size(pool_sizes);
+  imgui_pool_info.pPoolSizes                 = pool_sizes.data();
+
+  check(vkCreateDescriptorPool(context.device(), &imgui_pool_info, nullptr, &m_imgui_desc_pool), "");
+
+  ImGui_ImplVulkan_LoadFunctions(
+      [](const char* function_name, void* p_context) {
+        Context* context = (Context*) p_context;
+
+        auto instance_addr = vkGetInstanceProcAddr(context->instance(), function_name);
+        auto device_addr   = vkGetDeviceProcAddr(context->device(), function_name);
+
+        return device_addr ? device_addr : instance_addr;
+      },
+      &context
+  );
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  (void) io;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Enable Gamepad Controls
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
+  // ITS JUST DOESNT WORK =)
+  // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Enable Multi-Viewport / Platform Windows
+
+  ImGuiStyle &style = ImGui::GetStyle();
+  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+    style.WindowRounding              = 0.0f;
+    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+  }
+
+  // Setup Dear ImGui style
+  ImGui::StyleColorsDark();
+
+  ImGui_ImplGlfw_InitForVulkan(context.window(), true);
+
+  // this initializes imgui for Vulkan
+  ImGui_ImplVulkan_InitInfo init_info = {};
+  init_info.Instance                  = context.instance();
+  init_info.PhysicalDevice            = context.physical_device();
+  init_info.Device                    = context.device();
+  init_info.Queue                     = context.graphics_queue();
+  init_info.DescriptorPool            = m_imgui_desc_pool;
+  init_info.MinImageCount             = context.swapchain_image_count();
+  init_info.ImageCount                = context.swapchain_image_count();
+  init_info.UseDynamicRendering       = true;
+  init_info.ColorAttachmentFormat     = context.swapchain_image_format();
+  init_info.MSAASamples               = VK_SAMPLE_COUNT_1_BIT;
+
+  ImGui_ImplVulkan_Init(&init_info, VK_NULL_HANDLE);
+
+  ImGui_ImplVulkan_CreateFontsTexture();
 }
 
 Renderer::~Renderer() {
@@ -234,6 +313,11 @@ Renderer::~Renderer() {
     Context const &context = m_context;
 
     vkDeviceWaitIdle(context.device());
+
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    vkDestroyDescriptorPool(context.device(), m_imgui_desc_pool, nullptr);
 
     std::vector<VkCommandBuffer> buffers{ (size_t) m_frames_count };
     for (auto frame_data : m_frames_data) {
@@ -257,12 +341,23 @@ Renderer::~Renderer() {
 
 void Renderer::draw() {
   Context const &context = m_context;
-  // wait until the gpu has finished rendering the last frame. Timeout of 1
-  // second
+
+  // imgui new frame
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+
+  // some imgui UI to test
+  ImGui::ShowDemoWindow();
+
+  // make imgui calculate internal draw structures
+  ImGui::Render();
 
   constexpr u64 no_timeout = std::numeric_limits<u64>::max();
 
   render_frame_data_t data = m_frames_data[m_current_frame];
+  // wait until the gpu has finished rendering the last frame. Timeout of 1
+  // second
   check(vkWaitForFences(context.device(), 1, &data.in_flight_fence, true, 1000000000), "");
 
   u32 image_index = 0;
@@ -299,22 +394,18 @@ void Renderer::draw() {
         data.command_buffer, context.swapchain_frames()[image_index].depth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
     );
 
-    std::array<VkClearValue, 2> clear_values = {};
-    clear_values[0].color                    = {
-      {0.0f, 1.0f, 0.0f, 1.0f}
-    };
-    clear_values[1].depthStencil = { 1.0f, 0 };
-
     transition_image(data.command_buffer, context.swapchain_frames()[image_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     VkRenderingAttachmentInfo color_attachment = {};
 
-    color_attachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    color_attachment.imageView   = context.swapchain_frames()[image_index].image_view;
-    color_attachment.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    color_attachment.loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD;
-    color_attachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
-    color_attachment.clearValue.color = {{0.0f, 1.0f, 0.0f, 1.0f}};
+    color_attachment.sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    color_attachment.imageView        = context.swapchain_frames()[image_index].image_view;
+    color_attachment.imageLayout      = VK_IMAGE_LAYOUT_GENERAL;
+    color_attachment.loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp          = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.clearValue.color = {
+      {0.0f, 0.0f, 0.0f, 1.0f}
+    };
 
     VkRenderingAttachmentInfo depth_attachment = {};
 
@@ -332,7 +423,7 @@ void Renderer::draw() {
 
     VkRenderingInfo render_info      = {};
     render_info.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    render_info.layerCount = 1;
+    render_info.layerCount           = 1;
     render_info.colorAttachmentCount = 1;
     render_info.pColorAttachments    = &color_attachment;
     render_info.pDepthAttachment     = &depth_attachment;
@@ -344,6 +435,30 @@ void Renderer::draw() {
     vkCmdBindPipeline(data.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
     vkCmdDraw(data.command_buffer, 3, 1, 0, 0);
+
+    vkCmdEndRendering(data.command_buffer);
+
+    VkRenderingAttachmentInfo imgui_color_attachment = {};
+
+    imgui_color_attachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    imgui_color_attachment.imageView   = context.swapchain_frames()[image_index].image_view;
+    imgui_color_attachment.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imgui_color_attachment.loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD;
+    imgui_color_attachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+
+    VkRenderingInfo imgui_render_info = {};
+
+    imgui_render_info.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    imgui_render_info.layerCount           = 1;
+    imgui_render_info.colorAttachmentCount = 1;
+    imgui_render_info.renderArea           = render_area;
+    imgui_render_info.pColorAttachments    = &imgui_color_attachment;
+    imgui_render_info.pDepthAttachment     = nullptr;
+    imgui_render_info.pStencilAttachment   = nullptr;
+
+    vkCmdBeginRendering(data.command_buffer, &imgui_render_info);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), data.command_buffer);
 
     vkCmdEndRendering(data.command_buffer);
   }

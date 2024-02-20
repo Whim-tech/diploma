@@ -14,20 +14,6 @@
 
 namespace whim::vk {
 
-struct allocated_image_2d_t {
-  handle<VkImage>     image      = {};
-  handle<VkImageView> image_view = {};
-  VkExtent2D          extent     = {};
-  VkFormat            format     = {};
-  VmaAllocation       allocation = nullptr;
-};
-
-struct push_constant_t {
-  glm::mat4 model;
-  glm::mat4 view;
-  glm::mat4 proj;
-};
-
 struct buffer_t {
   handle<VkBuffer>      buffer     = nullptr;
   handle<VmaAllocation> allocation = nullptr;
@@ -63,10 +49,6 @@ private:
     handle<VkSemaphore> render_finished_semaphore = {};
   };
 
-  struct imgui_data_t {
-    handle<VkDescriptorPool> descriptor_pool = {};
-  };
-
 private:
   handle<VkPipeline>       m_pipeline        = {};
   handle<VkPipelineLayout> m_pipeline_layout = {};
@@ -79,7 +61,7 @@ private:
   // NOTE: size == m_frames_count
   std::vector<render_frame_data_t> m_frames_data = {};
 
-  imgui_data_t imgui = {};
+  handle<VkDescriptorPool> m_imgui_desc_pool = VK_NULL_HANDLE;
 
   ref<Context> m_context;
 
@@ -89,7 +71,9 @@ private:
   constexpr static std::string_view vertex_path   = "./spv/default.vert.spv";
   constexpr static std::string_view fragment_path = "./spv/default.frag.spv";
 
-  VkPipeline     create_pipeline();
+  VkPipeline create_pipeline();
+
+  void draw_ui();
 };
 
 constexpr VkVertexInputBindingDescription vertex_t::description() {

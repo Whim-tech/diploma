@@ -233,6 +233,41 @@ Context::Context(config_t const &config, Window const &window) :
     set_debug_name(m_frames[i].depth.image, fmt::format("swapchain_depth_image #{}", i + 1));
     set_debug_name(m_frames[i].depth.image_view, fmt::format("swapchain_depth_image_view #{}", i + 1));
   }
+
+  VkCommandPoolCreateInfo imm_cmd_pool_info = {};
+  imm_cmd_pool_info.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  imm_cmd_pool_info.pNext                   = nullptr;
+  imm_cmd_pool_info.queueFamilyIndex        = m_device.graphics_family_index;
+  imm_cmd_pool_info.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+  check(
+      vkCreateCommandPool(m_device.logical, &imm_cmd_pool_info, nullptr, &m_immediate_data.cmd_pool), //
+      "creating command pool"
+  );
+
+  VkCommandBufferAllocateInfo cmd_buffers_create_info = {};
+  cmd_buffers_create_info.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  cmd_buffers_create_info.commandPool                 = m_immediate_data.cmd_pool;
+  cmd_buffers_create_info.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  cmd_buffers_create_info.commandBufferCount          = 1;
+
+  check(
+      vkAllocateCommandBuffers(
+          m_device.logical, &cmd_buffers_create_info,
+          &m_immediate_data.cmd_buffer
+      ), //
+      "allocate command buffers"
+  );
+
+  VkFenceCreateInfo fence_create_info = {};
+  fence_create_info.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  fence_create_info.pNext             = nullptr;
+  fence_create_info.flags             = VK_FENCE_CREATE_SIGNALED_BIT;
+
+  check(
+      vkCreateFence(m_device.logical, &fence_create_info, nullptr, &m_immediate_data.fence), //
+      "creating fence"
+  );
 }
 
 Context::~Context() {
@@ -251,6 +286,10 @@ Context::~Context() {
     */
 
     vkDeviceWaitIdle(m_device.logical);
+
+    vkDestroyFence(m_device.logical, m_immediate_data.fence, nullptr);
+    vkFreeCommandBuffers(m_device.logical, m_immediate_data.cmd_pool, 1, &m_immediate_data.cmd_buffer);
+    vkDestroyCommandPool(m_device.logical, m_immediate_data.cmd_pool, nullptr);
 
     for (auto const &frame : m_frames) {
       vkDestroyImageView(m_device.logical, frame.image_view, nullptr);
@@ -279,6 +318,38 @@ Context::~Context() {
     m_command_pool    = {};
     m_swapchain       = {};
   }
+}
+
+void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) {
+  check(vkResetFences(m_device.logical, 1, &m_immediate_data.fence), "");
+  check(vkResetCommandBuffer(m_immediate_data.cmd_buffer, 0), "");
+
+  VkCommandBuffer cmd = m_immediate_data.cmd_buffer;
+
+  VkCommandBufferBeginInfo cmd_begin_info = {};
+  cmd_begin_info.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  cmd_begin_info.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  check(vkBeginCommandBuffer(cmd, &cmd_begin_info), "");
+
+  function(cmd);
+
+  check(vkEndCommandBuffer(cmd), "");
+
+  VkCommandBufferSubmitInfo cmd_info = {};
+  cmd_info.sType                     = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+  cmd_info.commandBuffer             = cmd;
+
+  VkSubmitInfo2 submit          = {};
+  submit.sType                  = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+  submit.commandBufferInfoCount = 1;
+  submit.pCommandBufferInfos    = &cmd_info;
+
+  // submit command buffer to the queue and execute it.
+  //  _renderFence will now block until the graphic commands finish execution
+  check(vkQueueSubmit2(m_device.graphics_queue, 1, &submit, m_immediate_data.fence), "");
+
+  check(vkWaitForFences(m_device.logical, 1, &m_immediate_data.fence, true, 9999999999), "");
 }
 
 void Context::set_debug_name(VkImage image, std::string_view name) {
@@ -431,6 +502,6 @@ void Context::set_debug_name(VkPipeline pipeline, std::string_view name) {
 
 [[nodiscard]] u32 Context::swapchain_image_count() const { return m_swapchain.image_count; }
 
-[[nodiscard]] GLFWwindow* Context::window() { return m_window_ref.get().handle(); }
+[[nodiscard]] GLFWwindow* Context::window() const { return m_window_ref.get().handle(); }
 
 } // namespace whim::vk

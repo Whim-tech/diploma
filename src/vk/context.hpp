@@ -37,6 +37,8 @@ public:
   //                .enable_instance_layer(...)
   ~Context();
 
+  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+
   Context(Context &&) noexcept            = default;
   Context &operator=(Context &&) noexcept = default;
   Context(const Context &)                = delete;
@@ -65,7 +67,7 @@ public:
   [[nodiscard]] VkExtent2D                            swapchain_extent() const;
   [[nodiscard]] u32                                   swapchain_image_count() const;
 
-  [[nodiscard]] GLFWwindow* window();
+  [[nodiscard]] GLFWwindow* window() const;
 
   // TODO: handling resizing
   //  - recreate swapchain
@@ -116,6 +118,12 @@ private:
   } m_swapchain;
 
   std::vector<swapchain_frame_t> m_frames{};
+
+  struct immediate_data_t {
+    handle<VkFence>         fence;
+    handle<VkCommandPool>   cmd_pool;
+    handle<VkCommandBuffer> cmd_buffer;
+  } m_immediate_data;
 
   cref<Window> m_window_ref;
 };

@@ -38,11 +38,6 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/external/glfw")
 # GLM
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/glm")
 
-# this should be added after glfw and vulkan
-# DO NOT CHANGE ORDER OF THIS WITH VULKAN OR GLFW!
-# add_subdirectory("${PROJECT_SOURCE_DIR}/external/imgui")
-
-
 add_executable(main)
 target_compile_options(main PRIVATE ${WHIM_DEFAULT_COMPILE_OPTIONS})
 target_compile_features(main PRIVATE ${WHIM_DEFAULT_COMPILE_FEATURE})
@@ -67,8 +62,6 @@ target_link_libraries(main PRIVATE
   glm::glm
   fmt::fmt
   GPUOpen::VulkanMemoryAllocator # vma
-
-  # imgui
 )
 
 set_target_properties(main PROPERTIES
