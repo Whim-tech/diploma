@@ -3,3 +3,4 @@ build/*
 .cache/*
 bin/*
 !bin/.gitkeep
+!bin/spv/.gitkeep

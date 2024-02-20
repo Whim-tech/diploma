@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.28)
 
 project(raytracing CXX)
 
+include("${PROJECT_SOURCE_DIR}/cmake/glsl.cmake")
+
 option(WHIM_BUILD_TEST "Build tests" ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -19,7 +21,7 @@ endif()
 # FIXME: find some way to make clang dont ignore my std flags with msvc
 set(WHIM_DEFAULT_COMPILE_FEATURE "cxx_std_20")
 set(WHIM_EXTERNAL_DEPS_PATH "${PROJECT_SOURCE_DIR}/external")
-set(BASE_DIRECTORY "${PROJECT_SOURCE_DIR}/external" )
+set(BASE_DIRECTORY "${PROJECT_SOURCE_DIR}/external")
 
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/volk")
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/vk-bootstrap")
@@ -32,6 +34,7 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/glfw")
+
 # GLM
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/glm")
 
@@ -45,9 +48,18 @@ target_compile_options(main PRIVATE ${WHIM_DEFAULT_COMPILE_OPTIONS})
 target_compile_features(main PRIVATE ${WHIM_DEFAULT_COMPILE_FEATURE})
 target_include_directories(main PRIVATE "${PROJECT_SOURCE_DIR}/src")
 
-
 file(GLOB_RECURSE source_files CONFIGURE_DEPENDS "src/*.cpp" "src/*.cxx" "src/*.cc")
 target_sources(main PRIVATE ${source_files})
+
+# SHADERS
+compile_glsl_directory(
+  SRC "${PROJECT_SOURCE_DIR}/assets/shaders"
+  DST "${PROJECT_SOURCE_DIR}/bin/spv"
+  VULKAN_TARGET "vulkan1.3"
+  DEPENDENCY ON
+  )
+  
+target_sources(main PRIVATE ${SPV_OUTPUT})
 
 target_link_libraries(main PRIVATE
   glfw
@@ -55,7 +67,8 @@ target_link_libraries(main PRIVATE
   glm::glm
   fmt::fmt
   GPUOpen::VulkanMemoryAllocator # vma
-#   imgui
+
+  # imgui
 )
 
 set_target_properties(main PROPERTIES

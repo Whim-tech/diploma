@@ -86,8 +86,8 @@ private:
 private:
   constexpr static u32 m_frames_count = 2;
 
-  constexpr static std::string_view vertex_path   = "../assets/shaders/default.vert.spv";
-  constexpr static std::string_view fragment_path = "../assets/shaders/default.frag.spv";
+  constexpr static std::string_view vertex_path   = "./spv/default.vert.spv";
+  constexpr static std::string_view fragment_path = "./spv/default.frag.spv";
 
   VkPipeline     create_pipeline();
 };
