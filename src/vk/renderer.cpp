@@ -3,7 +3,13 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
-#include <vulkan/vulkan_core.h>
+
+#include "GLFW/glfw3.h"
+#include "fmt/format.h"
+#include "glm/ext/matrix_clip_space.hpp"
+#include "glm/ext/matrix_transform.hpp"
+#include "obj_loader.hpp"
+#include "tiny_obj_loader.h"
 
 #include "vk/context.hpp"
 #include "vk/result.hpp"
@@ -12,6 +18,8 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_vulkan.h"
 #include "imgui/imgui_impl_glfw.h"
+
+#include "shader_interface.h"
 
 namespace whim::vk {
 
@@ -74,26 +82,34 @@ Renderer::Renderer(Context &context) :
     m_frames_data.push_back(data);
   }
 
+  VkPushConstantRange pc_range = {};
+  pc_range.offset              = 0;
+  pc_range.size                = sizeof(push_constant_t);
+  pc_range.stageFlags          = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
   VkPipelineLayoutCreateInfo pipeline_layout_create_info = {};
   pipeline_layout_create_info.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipeline_layout_create_info.pNext                      = nullptr;
   pipeline_layout_create_info.flags                      = 0;
   pipeline_layout_create_info.setLayoutCount             = 0;
   pipeline_layout_create_info.pSetLayouts                = nullptr;
-  pipeline_layout_create_info.pushConstantRangeCount     = 0;
-  pipeline_layout_create_info.pPushConstantRanges        = nullptr;
+  pipeline_layout_create_info.pushConstantRangeCount     = 1;
+  pipeline_layout_create_info.pPushConstantRanges        = &pc_range;
 
   check(
       vkCreatePipelineLayout(context.device(), &pipeline_layout_create_info, nullptr, &m_pipeline_layout), //
       "creating pipeline layout"
   );
 
+  auto attributes  = vertex_attributes_description();
+  auto description = vertex_description();
+
   VkPipelineVertexInputStateCreateInfo input_state = {};
   input_state.sType                                = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  input_state.vertexBindingDescriptionCount        = 0;
-  input_state.pVertexBindingDescriptions           = nullptr;
-  input_state.vertexAttributeDescriptionCount      = 0;
-  input_state.pVertexAttributeDescriptions         = nullptr;
+  input_state.vertexBindingDescriptionCount        = 1;
+  input_state.pVertexBindingDescriptions           = &description;
+  input_state.vertexAttributeDescriptionCount      = attributes.size();
+  input_state.pVertexAttributeDescriptions         = attributes.data();
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
   input_assembly.sType                                  = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -126,7 +142,7 @@ Renderer::Renderer(Context &context) :
   rast_state.depthClampEnable                       = VK_FALSE;
   rast_state.rasterizerDiscardEnable                = VK_FALSE;
   rast_state.polygonMode                            = VK_POLYGON_MODE_FILL;
-  rast_state.cullMode                               = VK_CULL_MODE_BACK_BIT;
+  rast_state.cullMode                               = VK_CULL_MODE_NONE;
   rast_state.frontFace                              = VK_FRONT_FACE_CLOCKWISE;
   rast_state.depthBiasClamp                         = VK_FALSE;
   rast_state.lineWidth                              = 1.f;
@@ -314,6 +330,15 @@ Renderer::~Renderer() {
 
     vkDeviceWaitIdle(context.device());
 
+    vmaDestroyBuffer(context.vma_allocator(), m_desc_buffer.buffer, m_desc_buffer.allocation);
+
+    for (auto &model : m_model_desc) {
+      vmaDestroyBuffer(context.vma_allocator(), model.vertex.buffer, model.vertex.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.index.buffer, model.index.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.material.buffer, model.material.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.material_index.buffer, model.material_index.allocation);
+    }
+
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -339,6 +364,80 @@ Renderer::~Renderer() {
   }
 }
 
+void Renderer::load_model(std::string_view const obj_path) {
+
+  Context &context = m_context;
+
+  whim::ObjLoader loader(obj_path);
+
+  // Converting from Srgb to linear
+  // TODO: what is going on in here =/
+  for (auto &m : loader.materials) {
+    m.ambient  = glm::pow(m.ambient, glm::vec3(2.2f));
+    m.diffuse  = glm::pow(m.diffuse, glm::vec3(2.2f));
+    m.specular = glm::pow(m.specular, glm::vec3(2.2f));
+  }
+
+  model_description_t model = {};
+
+  model.vertex_count = loader.vertexes.size();
+  model.index_count  = loader.indices.size();
+
+  std::vector<vertex> vertexes{};
+  constexpr auto      size = sizeof(vertex);
+  vertexes.reserve(loader.vertexes.size());
+  for (auto &v : loader.vertexes) {
+    vertexes.push_back(vertex{ .pos = v.pos, .u_x = v.texture.x, .normal = v.norm, .u_y = v.texture.y });
+  }
+
+  std::vector<material> materials{};
+  materials.reserve(loader.materials.size());
+
+  for (auto &m : loader.materials) {
+    materials.push_back(material{
+        .ambient       = m.ambient,
+        .diffuse       = m.diffuse,
+        .specular      = m.specular,
+        .transmittance = m.transmittance,
+        .emission      = m.emission,
+        .shininess     = m.shininess,
+        .ior           = m.ior,
+        .dissolve      = m.dissolve,
+        .illum         = m.illum,
+        .texture_id    = m.texture_id,
+    });
+  }
+
+  VkBufferUsageFlags flag = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  // FIXME: each create buffer is queue submission that is bad
+  model.vertex         = context.create_buffer(vertexes, flag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+  model.index          = context.create_buffer(loader.indices, flag | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+  model.material       = context.create_buffer(materials, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  model.material_index = context.create_buffer(loader.mat_indices, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+  auto number = m_model_desc.size();
+  context.set_debug_name(model.vertex.buffer, fmt::format("vertex buffer for model#{}", number));
+  context.set_debug_name(model.index.buffer, fmt::format("index buffer for model#{}", number));
+  context.set_debug_name(model.material.buffer, fmt::format("material buffer for model#{}", number));
+  context.set_debug_name(model.material_index.buffer, fmt::format("material_index buffer for model#{}", number));
+
+  object_description desc = {};
+
+  desc.txtOffset              = 0;
+  desc.vertex_address         = context.get_buffer_device_address(model.vertex.buffer);
+  desc.index_address          = context.get_buffer_device_address(model.index.buffer);
+  desc.material_address       = context.get_buffer_device_address(model.material.buffer);
+  desc.material_index_address = context.get_buffer_device_address(model.material_index.buffer);
+
+  m_object_desc.push_back(desc);
+  m_model_desc.push_back(model);
+}
+
+void Renderer::end_load() {
+  m_desc_buffer      = m_context.get().create_buffer(m_object_desc, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+  m_desc_buffer_addr = m_context.get().get_buffer_device_address(m_desc_buffer.buffer);
+}
+
 void Renderer::draw() {
   Context const &context = m_context;
 
@@ -358,7 +457,7 @@ void Renderer::draw() {
   render_frame_data_t data = m_frames_data[m_current_frame];
   // wait until the gpu has finished rendering the last frame. Timeout of 1
   // second
-  check(vkWaitForFences(context.device(), 1, &data.in_flight_fence, true, 1000000000), "");
+  check(vkWaitForFences(context.device(), 1, &data.in_flight_fence, true, no_timeout), "");
 
   u32 image_index = 0;
   check(
@@ -404,7 +503,7 @@ void Renderer::draw() {
     color_attachment.loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color_attachment.storeOp          = VK_ATTACHMENT_STORE_OP_STORE;
     color_attachment.clearValue.color = {
-      {0.0f, 0.0f, 0.0f, 1.0f}
+      {0.0f, 0.5f, 0.0f, 1.0f}
     };
 
     VkRenderingAttachmentInfo depth_attachment = {};
@@ -434,7 +533,25 @@ void Renderer::draw() {
 
     vkCmdBindPipeline(data.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
-    vkCmdDraw(data.command_buffer, 3, 1, 0, 0);
+    for (size_t i = 0; i < m_object_desc.size(); i += 1) {
+
+      push_constant_t pc = {};
+      pc.obj_index       = i;
+      pc.obj_address     = m_desc_buffer_addr;
+
+      auto extent = context.swapchain_extent();
+      pc.mvp      = glm::perspectiveRH(45.f, (float) extent.width / (float) extent.height, 0.01f, 100.f) *
+               glm::lookAtRH(glm::vec3{ 0.f, 0.f, -3.f }, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 1.f, 0.f });
+      pc.mvp = glm::rotate(pc.mvp, glm::radians(float(glfwGetTime()) * 100), glm::vec3{ 0.f, 1.f, 1.f });
+
+      vkCmdPushConstants(data.command_buffer, m_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push_constant_t), &pc);
+
+      vkCmdBindIndexBuffer(data.command_buffer, m_model_desc[i].index.buffer, 0, VK_INDEX_TYPE_UINT32);
+      VkDeviceSize offset{ 0 };
+      vkCmdBindVertexBuffers(data.command_buffer, 0, 1, &m_model_desc[i].vertex.buffer, &offset);
+
+      vkCmdDrawIndexed(data.command_buffer, m_model_desc[i].index_count, 1, 0, 0, 0);
+    }
 
     vkCmdEndRendering(data.command_buffer);
 

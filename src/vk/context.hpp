@@ -26,6 +26,11 @@ struct swapchain_frame_t {
   } depth;
 };
 
+struct buffer_t {
+  handle<VkBuffer>      buffer     = nullptr;
+  handle<VmaAllocation> allocation = nullptr;
+};
+
 class Context {
 
 public:
@@ -37,7 +42,22 @@ public:
   //                .enable_instance_layer(...)
   ~Context();
 
-  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+  void immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function);
+
+  VkDeviceAddress get_buffer_device_address(VkBuffer buffer);
+
+  buffer_t create_buffer(
+      VkDeviceSize size, const void* data_, //
+      VkBufferUsageFlags usage_, VkMemoryPropertyFlags memProps = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  );
+
+  template<typename T>
+  buffer_t create_buffer(
+      std::vector<T>    &data, //
+      VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_props_ = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  ) {
+    return create_buffer(sizeof(T) * data.size(), data.data(), usage, mem_props_);
+  }
 
   Context(Context &&) noexcept            = default;
   Context &operator=(Context &&) noexcept = default;
@@ -87,6 +107,7 @@ public:
   void set_debug_name(VkFence fence, std::string_view name);
   void set_debug_name(VkSemaphore semaphore, std::string_view name);
   void set_debug_name(VkPipeline pipeline, std::string_view name);
+  void set_debug_name(VkBuffer buffer, std::string_view name);
 
 private:
   handle<VkInstance>               m_instance        = VK_NULL_HANDLE;
@@ -126,6 +147,8 @@ private:
   } m_immediate_data;
 
   cref<Window> m_window_ref;
+
+private:
 };
 
 } // namespace whim::vk

@@ -7,23 +7,29 @@
 
 #include <Volk/volk.h>
 
+#include "shader_interface.h"
 #include "vk/context.hpp"
 #include "utility/types.hpp"
 
 #include <array>
+#include <vulkan/vulkan_core.h>
 
 namespace whim::vk {
 
-struct buffer_t {
-  handle<VkBuffer>      buffer     = nullptr;
-  handle<VmaAllocation> allocation = nullptr;
+struct model_description_t {
+  buffer_t index          = {};
+  buffer_t vertex         = {};
+  buffer_t material       = {};
+  buffer_t material_index = {};
+
+  int vertex_count = 0;
+  int index_count  = 0;
+  
 };
 
-struct vertex_t {
-  glm::vec3                                                         pos  = { 0.f, 0.f, 0.f };
-  glm::vec3                                                         norm = { 0.f, 0.f, 0.f };
-  static constexpr VkVertexInputBindingDescription                  description();
-  static constexpr std::array<VkVertexInputAttributeDescription, 2> attributes_description();
+struct model_instance_t {
+  glm::mat4 transform = glm::mat4{ 1.f };
+  u32       index     = 0;
 };
 
 class Renderer {
@@ -37,6 +43,9 @@ public:
   Renderer &operator=(const Renderer &)     = delete;
 
   void draw();
+
+  void load_model(std::string_view obj_path);
+  void end_load();
 
 private:
   struct render_frame_data_t {
@@ -63,6 +72,12 @@ private:
 
   handle<VkDescriptorPool> m_imgui_desc_pool = VK_NULL_HANDLE;
 
+  buffer_t m_desc_buffer = {};
+  VkDeviceAddress m_desc_buffer_addr = {};
+  std::vector<object_description> m_object_desc{};
+
+  std::vector<model_description_t> m_model_desc{};
+
   ref<Context> m_context;
 
 private:
@@ -76,30 +91,30 @@ private:
   void draw_ui();
 };
 
-constexpr VkVertexInputBindingDescription vertex_t::description() {
-  VkVertexInputBindingDescription description = {};
+// constexpr VkVertexInputBindingDescription vertex_t::description() {
+//   VkVertexInputBindingDescription description = {};
 
-  description.binding   = 0;
-  description.stride    = sizeof(vertex_t);
-  description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+//   description.binding   = 0;
+//   description.stride    = sizeof(vertex_t);
+//   description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-  return description;
-}
+//   return description;
+// }
 
-constexpr std::array<VkVertexInputAttributeDescription, 2> vertex_t::attributes_description() {
+// constexpr std::array<VkVertexInputAttributeDescription, 2> vertex_t::attributes_description() {
 
-  std::array<VkVertexInputAttributeDescription, 2> attributes = {};
+//   std::array<VkVertexInputAttributeDescription, 2> attributes = {};
 
-  attributes[0].binding  = 0;
-  attributes[0].location = 0;
-  attributes[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
-  attributes[0].offset   = offsetof(vertex_t, pos);
+//   attributes[0].binding  = 0;
+//   attributes[0].location = 0;
+//   attributes[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
+//   attributes[0].offset   = offsetof(vertex_t, pos);
 
-  attributes[1].binding  = 0;
-  attributes[1].location = 1;
-  attributes[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
-  attributes[1].offset   = offsetof(vertex_t, norm);
+//   attributes[1].binding  = 0;
+//   attributes[1].location = 1;
+//   attributes[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
+//   attributes[1].offset   = offsetof(vertex_t, norm);
 
-  return attributes;
-}
+//   return attributes;
+// }
 }; // namespace whim::vk

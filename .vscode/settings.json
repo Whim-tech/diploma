@@ -18,6 +18,8 @@
         "Swapchain",
         "Swapchains",
         "swappable",
+        "texcoord",
+        "texcoords",
         "vararg",
         "VOLK",
         "WERROR"

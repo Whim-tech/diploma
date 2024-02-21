@@ -38,10 +38,14 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/external/glfw")
 # GLM
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/glm")
 
+add_subdirectory("${PROJECT_SOURCE_DIR}/external/tinyobjloader")
+
 add_executable(main)
 target_compile_options(main PRIVATE ${WHIM_DEFAULT_COMPILE_OPTIONS})
 target_compile_features(main PRIVATE ${WHIM_DEFAULT_COMPILE_FEATURE})
 target_include_directories(main PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(main PRIVATE "${PROJECT_SOURCE_DIR}/assets/shaders")
+target_sources(main PRIVATE "${PROJECT_SOURCE_DIR}/assets/shaders/shader_interface.h")
 
 file(GLOB_RECURSE source_files CONFIGURE_DEPENDS "src/*.cpp" "src/*.cxx" "src/*.cc")
 target_sources(main PRIVATE ${source_files})
@@ -62,6 +66,7 @@ target_link_libraries(main PRIVATE
   glm::glm
   fmt::fmt
   GPUOpen::VulkanMemoryAllocator # vma
+  tinyobjloader
 )
 
 set_target_properties(main PROPERTIES

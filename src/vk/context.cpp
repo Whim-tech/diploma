@@ -1,10 +1,13 @@
 #include "vk/context.hpp"
 
+#include <cassert>
 #include <stdexcept>
 #include <Volk/volk.h>
 
+#define VK_NO_PROTOTYPES
 #include <VkBootstrap.h>
-#include <vulkan/vulkan_core.h>
+#include <vk_mem_alloc.h>
+
 #include "whim.hpp"
 #include "vk/result.hpp"
 
@@ -65,13 +68,22 @@ Context::Context(config_t const &config, Window const &window) :
                    .add_required_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
   }
 
-  VkPhysicalDeviceVulkan13Features features = {};
-  features.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-  features.dynamicRendering                 = true;
-  features.synchronization2                 = true;
+  VkPhysicalDeviceVulkan13Features features13 = {};
+  features13.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+  features13.dynamicRendering                 = true;
+  features13.synchronization2                 = true;
+
+  VkPhysicalDeviceVulkan12Features features12 = {};
+  features12.bufferDeviceAddress              = true;
+
+  VkPhysicalDeviceFeatures features = {};
+  features.shaderInt64              = true;
+  features.geometryShader           = true;
 
   auto ph_device_result = selector //
-                              .set_required_features_13(features)
+                              .set_required_features_13(features13)
+                              .set_required_features_12(features12)
+                              .set_required_features(features)
                               .select();
 
   if (!ph_device_result.has_value()) {
@@ -123,6 +135,7 @@ Context::Context(config_t const &config, Window const &window) :
   alloc_create_info.physicalDevice         = m_device.physical;
   alloc_create_info.device                 = m_device.logical;
   alloc_create_info.pVulkanFunctions       = &vulkan_functions;
+  alloc_create_info.flags                  = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
   check(
       vmaCreateAllocator(&alloc_create_info, &m_vma), //
@@ -352,6 +365,81 @@ void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&functi
   check(vkWaitForFences(m_device.logical, 1, &m_immediate_data.fence, true, 9999999999), "");
 }
 
+VkDeviceAddress Context::get_buffer_device_address(VkBuffer buffer) {
+  WASSERT(buffer != VK_NULL_HANDLE, "buffer should be valid");
+
+  VkBufferDeviceAddressInfo info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+  info.buffer                    = buffer;
+  return vkGetBufferDeviceAddress(m_device.logical, &info);
+}
+
+buffer_t Context::create_buffer(
+    VkDeviceSize size, const void* data, //
+    VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_props
+) {
+  buffer_t staging = {};
+
+  VkBufferCreateInfo staging_buffer_info = {};
+  staging_buffer_info.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  staging_buffer_info.size               = size;
+  staging_buffer_info.usage              = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  staging_buffer_info.sharingMode        = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocationCreateInfo staging_buffer_alloc = {};
+  staging_buffer_alloc.usage                   = VMA_MEMORY_USAGE_CPU_TO_GPU;
+  staging_buffer_alloc.flags                   = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+  staging_buffer_alloc.preferredFlags          = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+  check(
+      vmaCreateBuffer(
+          m_vma,                                       //
+          &staging_buffer_info, &staging_buffer_alloc, //
+          &staging.buffer, &staging.allocation, nullptr
+      ),
+      "creating buffer"
+  );
+
+  void* mapped_data = nullptr;
+  vmaMapMemory(m_vma, staging.allocation, &mapped_data);
+  memcpy(mapped_data, data, size);
+  vmaUnmapMemory(m_vma, staging.allocation);
+
+  buffer_t result = {};
+
+  VkBufferCreateInfo result_buffer_info = {};
+  result_buffer_info.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  result_buffer_info.size               = size;
+  result_buffer_info.usage              = VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage;
+  result_buffer_info.sharingMode        = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocationCreateInfo result_buffer_alloc = {};
+  result_buffer_alloc.usage                   = VMA_MEMORY_USAGE_GPU_ONLY;
+  result_buffer_alloc.requiredFlags           = mem_props;
+
+  check(
+      vmaCreateBuffer(
+          m_vma,                                     //
+          &result_buffer_info, &result_buffer_alloc, //
+          &result.buffer, &result.allocation, nullptr
+      ),
+      "creating buffer"
+  );
+
+
+  immediate_submit([&](VkCommandBuffer cmd) {
+    VkBufferCopy copy_region{};
+    copy_region.srcOffset = 0;
+    copy_region.dstOffset = 0;
+    copy_region.size      = size;
+
+    vkCmdCopyBuffer(cmd, staging.buffer, result.buffer, 1, &copy_region);
+  });
+
+  vmaDestroyBuffer(m_vma, staging.buffer, staging.allocation);
+
+  return result;
+}
+
 void Context::set_debug_name(VkImage image, std::string_view name) {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
@@ -461,6 +549,20 @@ void Context::set_debug_name(VkPipeline pipeline, std::string_view name) {
   check(
       vkSetDebugUtilsObjectNameEXT(m_device.logical, &info), //
       fmt::format("setting name:{} to VkPipeline:{}", name, fmt::ptr(pipeline))
+  );
+}
+
+void Context::set_debug_name(VkBuffer buffer, std::string_view name) {
+
+  VkDebugUtilsObjectNameInfoEXT info = {};
+  info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+  info.objectType                    = VK_OBJECT_TYPE_BUFFER;
+  info.objectHandle                  = (uint64_t) buffer;
+  info.pObjectName                   = name.data();
+
+  check(
+      vkSetDebugUtilsObjectNameEXT(m_device.logical, &info), //
+      fmt::format("setting name:{} to VkBuffer:{}", name, fmt::ptr(buffer))
   );
 }
 

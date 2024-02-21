@@ -1,22 +1,27 @@
 #version 450
 
-layout(location = 0) out vec3 vertex_color;
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : enable
+
+#include "shader_interface.h"
+
+// clang-format off
+layout(location = 0) in vec3 i_position;
+layout(location = 1) in float i_ux;
+layout(location = 2) in vec3 i_normal;
+layout(location = 3) in float i_uy;
+
+layout(location = 0) out vec3 o_color;
+
+layout(push_constant) uniform constants { push_constant_t pc; };
+
+// clang-format on
 
 void main() {
 
-  const vec3 positions[3] = vec3[3](
-      vec3(0.5f, 0.5f, 0.0f),  //
-      vec3(-0.5f, 0.5f, 0.0f), //
-      vec3(0.f, -0.5f, 0.0f)   //
-  );
+  o_color = i_normal;
+  gl_Position = pc.mvp * vec4(i_position, 1.f);
 
-  const vec3 colors[3] = vec3[3](
-      vec3(0.f, 1.f, 1.0f), //
-      vec3(1.f, 1.f, 0.0f), //
-      vec3(1.f, 0.f, 1.0f)  //
-  );
-
-  vertex_color   = colors[gl_VertexIndex];
-  gl_Position = vec4(positions[gl_VertexIndex], 1.0f);
 }
-
