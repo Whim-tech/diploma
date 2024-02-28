@@ -63,11 +63,29 @@
 			}
 		},
 		{
+			"name": "asan-address",
+			"hidden": true,
+			"environment": {
+				"CFLAGS": "/fsanitize=address",
+				"CXXFLAGS": "/fsanitize=address"
+			}
+		},
+		{
 			"name": "msbuild-msvc-debug",
 			"inherits": [
 				"msbuild",
 				"msvc",
 				"debug"
+			],
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "ninja-msvc-debug-asan",
+			"inherits": [
+				"ninja",
+				"msvc",
+				"debug",
+				"asan-address"
 			],
 			"binaryDir": "${sourceDir}/build/${presetName}"
 		},

@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "GLFW/glfw3.h"
+#include "camera.hpp"
 #include "fmt/format.h"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/ext/matrix_transform.hpp"
@@ -27,8 +28,9 @@ VkShaderModule create_shader_module(Context const &context, std::string_view fil
 
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout);
 
-Renderer::Renderer(Context &context) :
-    m_context(context) {
+Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
+    m_context(context),
+    m_camera(manipulator) {
 
   VkCommandBufferAllocateInfo cmd_buffers_create_info = {};
   cmd_buffers_create_info.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -142,13 +144,14 @@ Renderer::Renderer(Context &context) :
   rast_state.depthClampEnable                       = VK_FALSE;
   rast_state.rasterizerDiscardEnable                = VK_FALSE;
   rast_state.polygonMode                            = VK_POLYGON_MODE_FILL;
-  rast_state.cullMode                               = VK_CULL_MODE_NONE;
-  rast_state.frontFace                              = VK_FRONT_FACE_CLOCKWISE;
-  rast_state.depthBiasClamp                         = VK_FALSE;
-  rast_state.lineWidth                              = 1.f;
-  rast_state.depthBiasConstantFactor                = 0.f;
-  rast_state.depthBiasClamp                         = 0.f;
-  rast_state.depthBiasSlopeFactor                   = 0.f;
+  // rast_state.polygonMode                            = VK_POLYGON_MODE_LINE;
+  rast_state.cullMode                = VK_CULL_MODE_NONE;
+  rast_state.frontFace               = VK_FRONT_FACE_CLOCKWISE;
+  rast_state.depthBiasClamp          = VK_FALSE;
+  rast_state.lineWidth               = 1.f;
+  rast_state.depthBiasConstantFactor = 0.f;
+  rast_state.depthBiasClamp          = 0.f;
+  rast_state.depthBiasSlopeFactor    = 0.f;
 
   VkPipelineMultisampleStateCreateInfo mult_state = {};
   mult_state.sType                                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -540,9 +543,9 @@ void Renderer::draw() {
       pc.obj_address     = m_desc_buffer_addr;
 
       auto extent = context.swapchain_extent();
-      pc.mvp      = glm::perspectiveRH(45.f, (float) extent.width / (float) extent.height, 0.01f, 100.f) *
-               glm::lookAtRH(glm::vec3{ 0.f, 0.f, -3.f }, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 1.f, 0.f });
-      pc.mvp = glm::rotate(pc.mvp, glm::radians(float(glfwGetTime()) * 100), glm::vec3{ 0.f, 1.f, 1.f });
+      pc.mvp      = m_camera.get().proj_matrix() * m_camera.get().view_matrix();
+      // pc.mvp      = glm::rotate(pc.mvp, glm::radians(float(glfwGetTime()) * 100), glm::vec3{ 0.f, 1.f, 1.f });
+      pc.mvp = glm::scale(pc.mvp, glm::vec3{2.f / 500.f});
 
       vkCmdPushConstants(data.command_buffer, m_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push_constant_t), &pc);
 

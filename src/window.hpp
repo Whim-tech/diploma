@@ -25,6 +25,9 @@ public:
   void run(std::function<void(void)>);
   void close();
 
+  void disable_cursor();
+  void enable_cursor();
+
   // [[nodiscard]] std::pair<u32, u32> window_size() const;
   [[nodiscard]] VkExtent2D          window_size() const;
   [[nodiscard]] std::pair<u32, u32> framebuffer_size() const;

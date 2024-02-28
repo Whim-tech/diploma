@@ -396,7 +396,7 @@ buffer_t Context::create_buffer(
           &staging_buffer_info, &staging_buffer_alloc, //
           &staging.buffer, &staging.allocation, nullptr
       ),
-      "creating buffer"
+      "creating staging buffer"
   );
 
   void* mapped_data = nullptr;
@@ -422,7 +422,7 @@ buffer_t Context::create_buffer(
           &result_buffer_info, &result_buffer_alloc, //
           &result.buffer, &result.allocation, nullptr
       ),
-      "creating buffer"
+      "creating result buffer"
   );
 
 

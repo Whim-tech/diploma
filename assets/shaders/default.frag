@@ -17,7 +17,7 @@ layout(push_constant) uniform constants { push_constant_t pc; };
 layout(buffer_reference, scalar) buffer Descriptions { object_description d[]; };
 layout(buffer_reference, scalar) buffer Verteces { vertex v[]; };
 layout(buffer_reference, scalar) buffer VertIndices { int i[]; };
-layout(buffer_reference, scalar) buffer Materials { material m[]; };
+layout(buffer_reference) buffer Materials { material m[]; };
 layout(buffer_reference, scalar) buffer MatIndices { int i[]; };
 
 // clang-format on
@@ -38,5 +38,6 @@ void main() {
   vertex   v         = verteces.v[index];
 
   frag_color = vec4(v.normal, 1.f);
+  // frag_color = vec4(mat.diffuse, 1.f);
 
 }

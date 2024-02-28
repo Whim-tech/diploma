@@ -7,6 +7,7 @@
 
 #include <Volk/volk.h>
 
+#include "camera.hpp"
 #include "shader_interface.h"
 #include "vk/context.hpp"
 #include "utility/types.hpp"
@@ -34,7 +35,7 @@ struct model_instance_t {
 
 class Renderer {
 public:
-  explicit Renderer(Context &context);
+  explicit Renderer(Context &context, CameraManipulator const& man);
   ~Renderer();
 
   Renderer(Renderer &&) noexcept            = default;
@@ -79,6 +80,7 @@ private:
   std::vector<model_description_t> m_model_desc{};
 
   ref<Context> m_context;
+  cref<CameraManipulator> m_camera;
 
 private:
   constexpr static u32 m_frames_count = 2;
@@ -90,31 +92,4 @@ private:
 
   void draw_ui();
 };
-
-// constexpr VkVertexInputBindingDescription vertex_t::description() {
-//   VkVertexInputBindingDescription description = {};
-
-//   description.binding   = 0;
-//   description.stride    = sizeof(vertex_t);
-//   description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-//   return description;
-// }
-
-// constexpr std::array<VkVertexInputAttributeDescription, 2> vertex_t::attributes_description() {
-
-//   std::array<VkVertexInputAttributeDescription, 2> attributes = {};
-
-//   attributes[0].binding  = 0;
-//   attributes[0].location = 0;
-//   attributes[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
-//   attributes[0].offset   = offsetof(vertex_t, pos);
-
-//   attributes[1].binding  = 0;
-//   attributes[1].location = 1;
-//   attributes[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
-//   attributes[1].offset   = offsetof(vertex_t, norm);
-
-//   return attributes;
-// }
 }; // namespace whim::vk

@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "GLFW/glfw3.h"
 #include "vk/result.hpp"
 
 namespace whim {
@@ -28,6 +29,7 @@ Window::Window(config_t const &config) {
     WERROR("Failed to create GLFW window");
     throw std::runtime_error("failed to create glfw window");
   }
+
 }
 
 Window::~Window() {
@@ -46,6 +48,10 @@ void Window::run(std::function<void(void)> fun) {
     glfwPollEvents();
   }
 }
+
+void Window::disable_cursor() { glfwSetInputMode(m_handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED); }
+
+void Window::enable_cursor() { glfwSetInputMode(m_handle, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
 
 void Window::close() { glfwSetWindowShouldClose(m_handle, GLFW_TRUE); }
 

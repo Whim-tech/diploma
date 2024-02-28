@@ -57,7 +57,6 @@ compile_glsl_directory(
   VULKAN_TARGET "vulkan1.3"
   DEPENDENCY ON
   )
-  
 target_sources(main PRIVATE ${SPV_OUTPUT})
 
 target_link_libraries(main PRIVATE
