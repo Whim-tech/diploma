@@ -3,6 +3,7 @@
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"
+#include "Volk/volk.h"
 #include <cstdint>
 
 using vec2 = glm::vec2;
@@ -23,8 +24,7 @@ using uint = unsigned int;
 
 START_BINDING(SceneBindings)
   eGlobals  = 0,  // Global uniform containing camera matrices
-  eObjDescs = 1,  // Access to the object descriptions
-  eTextures = 2   // Access to textures
+  eTextures = 1   // Access to textures
 END_BINDING();
 
 // clang-format on
@@ -52,7 +52,10 @@ struct material {
 };
 
 struct global_ubo {
-  bool TODO;
+  mat4 view;
+  mat4 proj;
+  mat4 inverse_view;
+  mat4 inverse_proj;
 };
 
 struct push_constant_t {
@@ -65,11 +68,10 @@ struct vertex {
   vec3  pos;
   float u_x;
   vec3  normal;
-  float  u_y;
+  float u_y;
 };
 
 #ifdef __cplusplus
-#include "Volk/volk.h"
 #include <array>
 
 constexpr VkVertexInputBindingDescription vertex_description() {
@@ -109,6 +111,5 @@ constexpr std::array<VkVertexInputAttributeDescription, 4> vertex_attributes_des
   return attributes;
 }
 #endif
-
 
 #endif

@@ -5,7 +5,7 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_scalar_block_layout : enable
 
-#include "shader_interface.h"
+#include "shader.h"
 
 // clang-format off
 layout(location = 0) in vec3 i_position;

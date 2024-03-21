@@ -8,7 +8,7 @@
 #include <Volk/volk.h>
 
 #include "camera.hpp"
-#include "shader_interface.h"
+#include "shader.h"
 #include "vk/context.hpp"
 #include "utility/types.hpp"
 
@@ -17,25 +17,9 @@
 
 namespace whim::vk {
 
-struct model_description_t {
-  buffer_t index          = {};
-  buffer_t vertex         = {};
-  buffer_t material       = {};
-  buffer_t material_index = {};
-
-  int vertex_count = 0;
-  int index_count  = 0;
-  
-};
-
-struct model_instance_t {
-  glm::mat4 transform = glm::mat4{ 1.f };
-  u32       index     = 0;
-};
-
 class Renderer {
 public:
-  explicit Renderer(Context &context, CameraManipulator const& man);
+  explicit Renderer(Context &context, CameraManipulator const &man);
   ~Renderer();
 
   Renderer(Renderer &&) noexcept            = default;
@@ -45,7 +29,7 @@ public:
 
   void draw();
 
-  void load_model(std::string_view obj_path);
+  void load_model(std::string_view obj_path, glm::mat4 matrix = glm::mat4{ 1.f });
   void end_load();
 
 private:
@@ -57,6 +41,18 @@ private:
     handle<VkFence>     in_flight_fence           = {};
     handle<VkSemaphore> image_available_semaphore = {};
     handle<VkSemaphore> render_finished_semaphore = {};
+  };
+
+  struct model_description_t {
+    buffer_t index          = {};
+    buffer_t vertex         = {};
+    buffer_t material       = {};
+    buffer_t material_index = {};
+
+    int vertex_count = 0;
+    int index_count  = 0;
+
+    glm::mat4 matrix = glm::mat4{1.f};
   };
 
 private:
@@ -73,23 +69,25 @@ private:
 
   handle<VkDescriptorPool> m_imgui_desc_pool = VK_NULL_HANDLE;
 
-  buffer_t m_desc_buffer = {};
-  VkDeviceAddress m_desc_buffer_addr = {};
+  buffer_t                        m_desc_buffer      = {};
+  VkDeviceAddress                 m_desc_buffer_addr = {};
   std::vector<object_description> m_object_desc{};
 
   std::vector<model_description_t> m_model_desc{};
 
-  ref<Context> m_context;
+  ref<Context>            m_context;
   cref<CameraManipulator> m_camera;
+
+  struct desc_t {
+    handle<VkDescriptorSetLayout> layout = VK_NULL_HANDLE;
+    handle<VkDescriptorPool>      pool   = VK_NULL_HANDLE;
+    handle<VkDescriptorSet>       set    = VK_NULL_HANDLE;
+  } m_desc;
 
 private:
   constexpr static u32 m_frames_count = 2;
 
   constexpr static std::string_view vertex_path   = "./spv/default.vert.spv";
   constexpr static std::string_view fragment_path = "./spv/default.frag.spv";
-
-  VkPipeline create_pipeline();
-
-  void draw_ui();
 };
 }; // namespace whim::vk

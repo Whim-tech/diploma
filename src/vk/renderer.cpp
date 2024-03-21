@@ -3,6 +3,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <vulkan/vulkan_core.h>
 
 #include "GLFW/glfw3.h"
 #include "camera.hpp"
@@ -20,13 +21,9 @@
 #include "imgui/imgui_impl_vulkan.h"
 #include "imgui/imgui_impl_glfw.h"
 
-#include "shader_interface.h"
+#include "shader.h"
 
 namespace whim::vk {
-
-VkShaderModule create_shader_module(Context const &context, std::string_view file_path);
-
-void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout);
 
 Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
     m_context(context),
@@ -44,7 +41,7 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
           context.device(), &cmd_buffers_create_info,
           buffers.data()
       ), //
-      "allocate command buffers"
+      "allocate render command buffers"
   );
 
   VkFenceCreateInfo fence_create_info = {};
@@ -57,33 +54,69 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   semaphore_create_info.pNext                 = nullptr;
   semaphore_create_info.flags                 = 0;
 
-  for (int i = 0; i < m_frames_count; i += 1) {
+  for (u32 i = 0; i < (u32) m_frames_count; i += 1) {
     render_frame_data_t data = {};
     check(
-        vkCreateSemaphore(
-            context.device(), &semaphore_create_info, //
-            nullptr, &data.image_available_semaphore
-        ),
-        "creating image_available_semaphore"
+        vkCreateSemaphore(context.device(), &semaphore_create_info, nullptr, &data.image_available_semaphore), //
+        fmt::format("creating image_available_semaphore #{}", i)
     );
 
     check(
-        vkCreateSemaphore(
-            context.device(), &semaphore_create_info, //
-            nullptr, &data.render_finished_semaphore
-        ),
-        "creating render_finished_semaphore"
+        vkCreateSemaphore(context.device(), &semaphore_create_info, nullptr, &data.render_finished_semaphore), //
+        fmt::format("creating render_finished_semaphore #{}", i)
     );
 
     check(
         vkCreateFence(context.device(), &fence_create_info, nullptr, &data.in_flight_fence), //
-        "creating fence"
+        fmt::format("creating render fence#{}", i)
     );
     data.command_buffer = buffers[i];
 
     m_frames_data.push_back(data);
+
+    context.set_debug_name(data.command_buffer, fmt::format("render cmd buffer #{}", i));
+    context.set_debug_name(data.render_finished_semaphore, fmt::format("render_finished_semaphore #{}", i));
+    context.set_debug_name(data.image_available_semaphore, fmt::format("image_available_semaphore #{}", i));
+    context.set_debug_name(data.in_flight_fence, fmt::format("in_flight_fence #{}", i));
   }
 
+  // descriptors TODO:
+  VkDescriptorSetLayoutBinding ubo_layout = {};
+  ubo_layout.binding                      = 0;
+  ubo_layout.descriptorCount              = 1;
+  ubo_layout.descriptorType               = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  ubo_layout.stageFlags                   = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo descriptor_set_layout = {};
+  descriptor_set_layout.sType                           = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  descriptor_set_layout.bindingCount                    = 1;
+  descriptor_set_layout.pBindings                       = &ubo_layout;
+
+  check(vkCreateDescriptorSetLayout(context.device(), &descriptor_set_layout, nullptr, &m_desc.layout), "creating descriptor set layout");
+
+  std::array<VkDescriptorPoolSize, 1> desc_sizes = {
+  // VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
+  // VkDescriptorPoolSize{         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1},
+    VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1}
+  };
+
+  VkDescriptorPoolCreateInfo desc_pool = {};
+  desc_pool.sType                      = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  desc_pool.maxSets                    = 1;
+  desc_pool.poolSizeCount              = (u32) desc_sizes.size();
+  desc_pool.pPoolSizes                 = desc_sizes.data();
+
+  check(vkCreateDescriptorPool(context.device(), &desc_pool, nullptr, &m_desc.pool), "creating main desc pool");
+
+  VkDescriptorSetAllocateInfo desc_set = {};
+  desc_set.sType                       = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  desc_set.descriptorPool              = m_desc.pool;
+  desc_set.descriptorSetCount          = 1;
+  desc_set.pSetLayouts                 = &m_desc.layout;
+
+  check(vkAllocateDescriptorSets(context.device(), &desc_set, &m_desc.set), "allocating desc set");
+
+  // PIPELINE CREATION
   VkPushConstantRange pc_range = {};
   pc_range.offset              = 0;
   pc_range.size                = sizeof(push_constant_t);
@@ -93,8 +126,8 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   pipeline_layout_create_info.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipeline_layout_create_info.pNext                      = nullptr;
   pipeline_layout_create_info.flags                      = 0;
-  pipeline_layout_create_info.setLayoutCount             = 0;
-  pipeline_layout_create_info.pSetLayouts                = nullptr;
+  pipeline_layout_create_info.setLayoutCount             = 1;
+  pipeline_layout_create_info.pSetLayouts                = &m_desc.layout;
   pipeline_layout_create_info.pushConstantRangeCount     = 1;
   pipeline_layout_create_info.pPushConstantRanges        = &pc_range;
 
@@ -110,7 +143,7 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   input_state.sType                                = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
   input_state.vertexBindingDescriptionCount        = 1;
   input_state.pVertexBindingDescriptions           = &description;
-  input_state.vertexAttributeDescriptionCount      = attributes.size();
+  input_state.vertexAttributeDescriptionCount      = (u32) attributes.size();
   input_state.pVertexAttributeDescriptions         = attributes.data();
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
@@ -144,6 +177,7 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   rast_state.depthClampEnable                       = VK_FALSE;
   rast_state.rasterizerDiscardEnable                = VK_FALSE;
   rast_state.polygonMode                            = VK_POLYGON_MODE_FILL;
+  // TODO: add this as a config
   // rast_state.polygonMode                            = VK_POLYGON_MODE_LINE;
   rast_state.cullMode                = VK_CULL_MODE_NONE;
   rast_state.frontFace               = VK_FRONT_FACE_CLOCKWISE;
@@ -197,8 +231,8 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   blend_state.blendConstants[3]                   = 0.0f;
   blend_state.sType                               = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 
-  VkShaderModule vertex_module   = create_shader_module(context, vertex_path);
-  VkShaderModule fragment_module = create_shader_module(context, fragment_path);
+  VkShaderModule vertex_module   = context.create_shader_module(vertex_path);
+  VkShaderModule fragment_module = context.create_shader_module(fragment_path);
 
   VkPipelineShaderStageCreateInfo vert_stage_create_info = {};
   vert_stage_create_info.sType                           = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -252,6 +286,7 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   vkDestroyShaderModule(context.device(), vertex_module, nullptr);
   vkDestroyShaderModule(context.device(), fragment_module, nullptr);
 
+  // IMGUI
   std::array<VkDescriptorPoolSize, 11> pool_sizes = {
     VkDescriptorPoolSize{               VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
     VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
@@ -273,7 +308,10 @@ Renderer::Renderer(Context &context, CameraManipulator const &manipulator) :
   imgui_pool_info.poolSizeCount              = (uint32_t) std::size(pool_sizes);
   imgui_pool_info.pPoolSizes                 = pool_sizes.data();
 
-  check(vkCreateDescriptorPool(context.device(), &imgui_pool_info, nullptr, &m_imgui_desc_pool), "");
+  check(
+      vkCreateDescriptorPool(context.device(), &imgui_pool_info, nullptr, &m_imgui_desc_pool), //
+      "allocating descriptor pool for imgui"
+  );
 
   ImGui_ImplVulkan_LoadFunctions(
       [](const char* function_name, void* p_context) {
@@ -333,6 +371,11 @@ Renderer::~Renderer() {
 
     vkDeviceWaitIdle(context.device());
 
+    // dont need that
+    // vkFreeDescriptorSets(context.device(), m_desc.pool, 1, &m_desc.set);
+    vkDestroyDescriptorSetLayout(context.device(), m_desc.layout, nullptr);
+    vkDestroyDescriptorPool(context.device(), m_desc.pool, nullptr);
+
     vmaDestroyBuffer(context.vma_allocator(), m_desc_buffer.buffer, m_desc_buffer.allocation);
 
     for (auto &model : m_model_desc) {
@@ -367,7 +410,7 @@ Renderer::~Renderer() {
   }
 }
 
-void Renderer::load_model(std::string_view const obj_path) {
+void Renderer::load_model(std::string_view const obj_path, glm::mat4 matrix) {
 
   Context &context = m_context;
 
@@ -383,11 +426,10 @@ void Renderer::load_model(std::string_view const obj_path) {
 
   model_description_t model = {};
 
-  model.vertex_count = loader.vertexes.size();
-  model.index_count  = loader.indices.size();
+  model.vertex_count = (i32) loader.vertexes.size();
+  model.index_count  = (i32) loader.indices.size();
 
   std::vector<vertex> vertexes{};
-  constexpr auto      size = sizeof(vertex);
   vertexes.reserve(loader.vertexes.size());
   for (auto &v : loader.vertexes) {
     vertexes.push_back(vertex{ .pos = v.pos, .u_x = v.texture.x, .normal = v.norm, .u_y = v.texture.y });
@@ -417,6 +459,7 @@ void Renderer::load_model(std::string_view const obj_path) {
   model.index          = context.create_buffer(loader.indices, flag | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
   model.material       = context.create_buffer(materials, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   model.material_index = context.create_buffer(loader.mat_indices, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  model.matrix         = matrix;
 
   auto number = m_model_desc.size();
   context.set_debug_name(model.vertex.buffer, fmt::format("vertex buffer for model#{}", number));
@@ -439,6 +482,7 @@ void Renderer::load_model(std::string_view const obj_path) {
 void Renderer::end_load() {
   m_desc_buffer      = m_context.get().create_buffer(m_object_desc, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
   m_desc_buffer_addr = m_context.get().get_buffer_device_address(m_desc_buffer.buffer);
+  m_context.get().set_debug_name(m_desc_buffer.buffer, "object description buffer");
 }
 
 void Renderer::draw() {
@@ -449,7 +493,7 @@ void Renderer::draw() {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  // some imgui UI to test
+  // TODO: place ui render here
   ImGui::ShowDemoWindow();
 
   // make imgui calculate internal draw structures
@@ -460,7 +504,10 @@ void Renderer::draw() {
   render_frame_data_t data = m_frames_data[m_current_frame];
   // wait until the gpu has finished rendering the last frame. Timeout of 1
   // second
-  check(vkWaitForFences(context.device(), 1, &data.in_flight_fence, true, no_timeout), "");
+  check(
+      vkWaitForFences(context.device(), 1, &data.in_flight_fence, true, no_timeout), //
+      fmt::format("waiting for render fence #{}", m_current_frame)
+  );
 
   u32 image_index = 0;
   check(
@@ -486,18 +533,15 @@ void Renderer::draw() {
 
   check(
       vkBeginCommandBuffer(data.command_buffer, &begin_info), //
-      "beginning command buffer"
+      "beginning rendering command buffer"
+  );
+
+  context.transition_image(data.command_buffer, context.swapchain_frames()[image_index].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+  context.transition_image(
+      data.command_buffer, context.swapchain_frames()[image_index].depth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
   );
 
   {
-
-    transition_image(data.command_buffer, context.swapchain_frames()[image_index].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-    transition_image(
-        data.command_buffer, context.swapchain_frames()[image_index].depth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
-    );
-
-    transition_image(data.command_buffer, context.swapchain_frames()[image_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
     VkRenderingAttachmentInfo color_attachment = {};
 
     color_attachment.sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -509,8 +553,7 @@ void Renderer::draw() {
       {0.0f, 0.5f, 0.0f, 1.0f}
     };
 
-    VkRenderingAttachmentInfo depth_attachment = {};
-
+    VkRenderingAttachmentInfo depth_attachment     = {};
     depth_attachment.sType                         = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     depth_attachment.imageView                     = context.swapchain_frames()[image_index].depth.image_view;
     depth_attachment.imageLayout                   = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -539,13 +582,11 @@ void Renderer::draw() {
     for (size_t i = 0; i < m_object_desc.size(); i += 1) {
 
       push_constant_t pc = {};
-      pc.obj_index       = i;
+      pc.obj_index       = (u32) i;
       pc.obj_address     = m_desc_buffer_addr;
 
-      auto extent = context.swapchain_extent();
-      pc.mvp      = m_camera.get().proj_matrix() * m_camera.get().view_matrix();
-      // pc.mvp      = glm::rotate(pc.mvp, glm::radians(float(glfwGetTime()) * 100), glm::vec3{ 0.f, 1.f, 1.f });
-      pc.mvp = glm::scale(pc.mvp, glm::vec3{2.f / 500.f});
+      pc.mvp = m_camera.get().proj_matrix() * m_camera.get().view_matrix() * m_model_desc[i].matrix;
+      // pc.mvp = glm::rotate(pc.mvp, glm::radians(float(glfwGetTime()) * 100), glm::vec3{ 0.f, 1.f, 1.f });
 
       vkCmdPushConstants(data.command_buffer, m_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push_constant_t), &pc);
 
@@ -582,6 +623,8 @@ void Renderer::draw() {
 
     vkCmdEndRendering(data.command_buffer);
   }
+
+  context.transition_image(data.command_buffer, context.swapchain_frames()[image_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
   check(
       vkEndCommandBuffer(data.command_buffer), //
@@ -628,73 +671,6 @@ void Renderer::draw() {
   );
 
   m_current_frame = (m_current_frame + 1) / m_frames_count;
-}
-
-VkShaderModule create_shader_module(Context const &context, std::string_view file_path) {
-
-  if (!std::filesystem::exists(file_path)) {
-    WERROR("[ERROR] Failed to create ShaderModule: file not found {}", file_path);
-    throw std::runtime_error("failed to create shader module");
-  }
-
-  std::ifstream file{ file_path.data(), std::ios::binary | std::ios::ate };
-
-  if (!file.is_open()) {
-    WERROR("[ERROR] Failed to create ShaderModule: cant open file {}", file_path);
-    throw std::runtime_error("failed to create shader module");
-  }
-
-  std::size_t       file_size = file.tellg();
-  std::vector<char> buffer(file_size);
-
-  file.seekg(0);
-  file.read(buffer.data(), file_size);
-  file.close();
-
-  VkShaderModuleCreateInfo create_info = {};
-
-  create_info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  create_info.codeSize = buffer.size();
-  create_info.pCode    = (u32*) buffer.data();
-
-  VkShaderModule shader_module = nullptr;
-  check(
-      vkCreateShaderModule(context.device(), &create_info, nullptr, &shader_module), //
-      "creating shader module"
-  );
-
-  return shader_module;
-}
-
-void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout) {
-  VkImageMemoryBarrier2 image_barrier{ .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-  image_barrier.pNext = nullptr;
-
-  image_barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-  image_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-  image_barrier.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-  image_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
-
-  image_barrier.oldLayout = currentLayout;
-  image_barrier.newLayout = newLayout;
-
-  VkImageAspectFlags aspect_mask = (newLayout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-  image_barrier.subresourceRange.aspectMask     = aspect_mask;
-  image_barrier.subresourceRange.baseMipLevel   = 0;
-  image_barrier.subresourceRange.levelCount     = VK_REMAINING_MIP_LEVELS;
-  image_barrier.subresourceRange.baseArrayLayer = 0;
-  image_barrier.subresourceRange.layerCount     = VK_REMAINING_ARRAY_LAYERS;
-  image_barrier.image                           = image;
-
-  VkDependencyInfo dep_info{};
-  dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-  dep_info.pNext = nullptr;
-
-  dep_info.imageMemoryBarrierCount = 1;
-  dep_info.pImageMemoryBarriers    = &image_barrier;
-
-  vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
 } // namespace whim::vk

@@ -15,6 +15,11 @@
 
 namespace whim::vk {
 
+struct buffer_t {
+  handle<VkBuffer>      buffer     = nullptr;
+  handle<VmaAllocation> allocation = nullptr;
+};
+
 struct swapchain_frame_t {
   VkImage     image      = VK_NULL_HANDLE;
   VkImageView image_view = VK_NULL_HANDLE;
@@ -24,11 +29,6 @@ struct swapchain_frame_t {
     VkImageView   image_view = VK_NULL_HANDLE;
     VmaAllocation allocation = VK_NULL_HANDLE;
   } depth;
-};
-
-struct buffer_t {
-  handle<VkBuffer>      buffer     = nullptr;
-  handle<VmaAllocation> allocation = nullptr;
 };
 
 class Context {
@@ -58,6 +58,13 @@ public:
   ) {
     return create_buffer(sizeof(T) * data.size(), data.data(), usage, mem_props_);
   }
+
+  VkShaderModule create_shader_module(std::string_view file_path) const;
+
+  void transition_image(
+      VkCommandBuffer cmd, VkImage image, //
+      VkImageLayout currentLayout, VkImageLayout newLayout
+  ) const;
 
   Context(Context &&) noexcept            = default;
   Context &operator=(Context &&) noexcept = default;

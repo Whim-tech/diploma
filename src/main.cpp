@@ -1,4 +1,5 @@
 #include "camera.hpp"
+#include "glm/ext/matrix_transform.hpp"
 #include "input.hpp"
 #include "obj_loader.hpp"
 #include "vk/renderer.hpp"
@@ -48,7 +49,7 @@ int main() {
 
   renderer.load_model("../assets/obj/cube_multi.obj");
   renderer.load_model("../assets/obj/wuson.obj");
-  renderer.load_model("../assets/obj/sponza.obj");
+  renderer.load_model("../assets/obj/sponza.obj", glm::scale(glm::mat4{ 1.f }, glm::vec3{ 0.01, 0.01, 0.01 }));
   renderer.end_load();
 
   w.run([&]() {

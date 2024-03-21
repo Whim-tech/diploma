@@ -45,10 +45,9 @@ target_compile_options(main PRIVATE ${WHIM_DEFAULT_COMPILE_OPTIONS})
 target_compile_features(main PRIVATE ${WHIM_DEFAULT_COMPILE_FEATURE})
 target_include_directories(main PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_include_directories(main PRIVATE "${PROJECT_SOURCE_DIR}/assets/shaders")
-target_sources(main PRIVATE "${PROJECT_SOURCE_DIR}/assets/shaders/shader_interface.h")
 
 file(GLOB_RECURSE source_files CONFIGURE_DEPENDS "src/*.cpp" "src/*.cxx" "src/*.cc")
-target_sources(main PRIVATE ${source_files})
+target_sources(main PRIVATE ${source_files} )
 
 # SHADERS
 compile_glsl_directory(
@@ -72,3 +71,10 @@ set_target_properties(main PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY_DEBUG "${PROJECT_SOURCE_DIR}/bin"
   RUNTIME_OUTPUT_DIRECTORY_RELEASE "${PROJECT_SOURCE_DIR}/bin"
 )
+
+# CLANGD ISSUE 
+# {
+#   "directory": "F:/workspace/raytracing/build/ninja-msvc-debug",
+#   "command": "\"F:\\software\\Visual Studio\\VC\\Tools\\MSVC\\14.36.32532\\bin\\Hostx86\\x64\\cl.exe\" /nologo /TP -IF:\\workspace\\raytracing\\src -IF:\\workspace\\raytracing\\assets\\shaders -IF:\\workspace\\raytracing\\external\\glfw\\include -IF:\\workspace\\raytracing\\external\\vk-bootstrap\\src -IF:\\workspace\\raytracing\\external\\glm -IF:\\workspace\\raytracing\\external\\fmt\\include -IF:\\workspace\\raytracing\\external\\VulkanMemoryAllocator\\include -IF:\\workspace\\raytracing\\external\\tinyobjloader -external:IE:\\software\\VulkanSDK\\1.3.275.0\\Include -external:W0 /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++20 -MDd -Zi /W4 @CMakeFiles\\main.dir\\src\\main.cpp.obj.modmap /FoCMakeFiles\\main.dir\\src\\main.cpp.obj /FdTARGET_COMPILE_PDB /FS F:\\workspace\\raytracing\\src\\main.cpp -c F:\\workspace\\raytracing\\assets\\shaders\\shader.h",
+#   "file": "F:\\workspace\\raytracing\\assets\\shaders\\shader.h"
+# },

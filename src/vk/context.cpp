@@ -1,7 +1,9 @@
 #include "vk/context.hpp"
 
-#include <cassert>
+#include <filesystem>
 #include <stdexcept>
+#include <fstream>
+
 #include <Volk/volk.h>
 
 #define VK_NO_PROTOTYPES
@@ -36,9 +38,10 @@ Context::Context(config_t const &config, Window const &window) :
                          .build();
 
   if (!inst_result.has_value()) {
-    WERROR("Failed to get VulkanINstance, message: {}", inst_result.error().message());
+    WERROR("Failed to get VulkanInstance, message: {}", inst_result.error().message());
     throw std::runtime_error("failed to get VkInstance");
   }
+
   m_instance        = inst_result->instance;
   m_debug_messenger = inst_result->debug_messenger;
   volkLoadInstance(m_instance);
@@ -154,7 +157,7 @@ Context::Context(config_t const &config, Window const &window) :
 
   check(
       vkCreateCommandPool(m_device.logical, &create_info, nullptr, &m_command_pool), //
-      "creating command pool"
+      "creating main command pool"
   );
   WINFO("created main command pool");
 
@@ -227,13 +230,13 @@ Context::Context(config_t const &config, Window const &window) :
             &frame.depth.image, &frame.depth.allocation, //
             nullptr
         ),
-        "creating depth image"
+        fmt::format("creating depth image#{}", i)
     );
     depth_view_info.image = frame.depth.image;
 
     check(
         vkCreateImageView(m_device.logical, &depth_view_info, nullptr, &frame.depth.image_view), //
-        "creating image view for depth buffer"
+        fmt::format("creating image view for depth buffer#{}", i)
     );
 
     m_frames.push_back(frame);
@@ -255,8 +258,9 @@ Context::Context(config_t const &config, Window const &window) :
 
   check(
       vkCreateCommandPool(m_device.logical, &imm_cmd_pool_info, nullptr, &m_immediate_data.cmd_pool), //
-      "creating command pool"
+      "creating command pool for immediate submission"
   );
+  set_debug_name(m_immediate_data.cmd_pool, "immediate command pool");
 
   VkCommandBufferAllocateInfo cmd_buffers_create_info = {};
   cmd_buffers_create_info.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -269,8 +273,9 @@ Context::Context(config_t const &config, Window const &window) :
           m_device.logical, &cmd_buffers_create_info,
           &m_immediate_data.cmd_buffer
       ), //
-      "allocate command buffers"
+      "allocating command buffer for immediate command pool"
   );
+  set_debug_name(m_immediate_data.cmd_buffer, "immediate command buffer");
 
   VkFenceCreateInfo fence_create_info = {};
   fence_create_info.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -279,8 +284,9 @@ Context::Context(config_t const &config, Window const &window) :
 
   check(
       vkCreateFence(m_device.logical, &fence_create_info, nullptr, &m_immediate_data.fence), //
-      "creating fence"
+      "creating fence for immediate cmd buffers"
   );
+  set_debug_name(m_immediate_data.fence, "immediate fence");
 }
 
 Context::~Context() {
@@ -290,12 +296,13 @@ Context::~Context() {
     /*
       ORDER OF DESTRUCTION:
         1. waiting until device is done touching our images
-        2. destroying of swapchain's iamge_views
-        3. destroying of swapchain
-        4. destroying of command_pool
-        5. destroying of device
-        6. destroying of debug message utils
-        7. destroying of instance
+        2. destroying immediate data
+        3. destroying of swapchain's image_views
+        4. destroying of swapchain
+        5. destroying of command_pool
+        6. destroying of device
+        7. destroying of debug message utils
+        8. destroying of instance
     */
 
     vkDeviceWaitIdle(m_device.logical);
@@ -334,8 +341,8 @@ Context::~Context() {
 }
 
 void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) {
-  check(vkResetFences(m_device.logical, 1, &m_immediate_data.fence), "");
-  check(vkResetCommandBuffer(m_immediate_data.cmd_buffer, 0), "");
+  check(vkResetFences(m_device.logical, 1, &m_immediate_data.fence), "reseting immediate fence");
+  check(vkResetCommandBuffer(m_immediate_data.cmd_buffer, 0), "reseting immediate cmd buffers");
 
   VkCommandBuffer cmd = m_immediate_data.cmd_buffer;
 
@@ -343,11 +350,11 @@ void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&functi
   cmd_begin_info.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   cmd_begin_info.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-  check(vkBeginCommandBuffer(cmd, &cmd_begin_info), "");
+  check(vkBeginCommandBuffer(cmd, &cmd_begin_info), "beginning immediate command buffer");
 
   function(cmd);
 
-  check(vkEndCommandBuffer(cmd), "");
+  check(vkEndCommandBuffer(cmd), "ending immediate command buffer");
 
   VkCommandBufferSubmitInfo cmd_info = {};
   cmd_info.sType                     = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
@@ -360,9 +367,9 @@ void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&functi
 
   // submit command buffer to the queue and execute it.
   //  _renderFence will now block until the graphic commands finish execution
-  check(vkQueueSubmit2(m_device.graphics_queue, 1, &submit, m_immediate_data.fence), "");
+  check(vkQueueSubmit2(m_device.graphics_queue, 1, &submit, m_immediate_data.fence), "submiting immediate cmd to queue");
 
-  check(vkWaitForFences(m_device.logical, 1, &m_immediate_data.fence, true, 9999999999), "");
+  check(vkWaitForFences(m_device.logical, 1, &m_immediate_data.fence, true, 9999999999), "waiting for fence");
 }
 
 VkDeviceAddress Context::get_buffer_device_address(VkBuffer buffer) {
@@ -422,9 +429,8 @@ buffer_t Context::create_buffer(
           &result_buffer_info, &result_buffer_alloc, //
           &result.buffer, &result.allocation, nullptr
       ),
-      "creating result buffer"
+      "creating destination buffer for transferring"
   );
-
 
   immediate_submit([&](VkCommandBuffer cmd) {
     VkBufferCopy copy_region{};
@@ -438,6 +444,73 @@ buffer_t Context::create_buffer(
   vmaDestroyBuffer(m_vma, staging.buffer, staging.allocation);
 
   return result;
+}
+
+VkShaderModule Context::create_shader_module(std::string_view file_path) const {
+
+  if (!std::filesystem::exists(file_path)) {
+    WERROR("Failed to create ShaderModule: file not found {}", file_path);
+    throw std::runtime_error("failed to create shader module");
+  }
+
+  std::ifstream file{ file_path.data(), std::ios::binary | std::ios::ate };
+
+  if (!file.is_open()) {
+    WERROR("Failed to create ShaderModule: cant open file {}", file_path);
+    throw std::runtime_error("failed to create shader module");
+  }
+
+  std::size_t       file_size = file.tellg();
+  std::vector<char> buffer(file_size);
+
+  file.seekg(0);
+  file.read(buffer.data(), file_size);
+  file.close();
+
+  VkShaderModuleCreateInfo create_info = {};
+
+  create_info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  create_info.codeSize = buffer.size();
+  create_info.pCode    = (u32*) buffer.data();
+
+  VkShaderModule shader_module = nullptr;
+  check(
+      vkCreateShaderModule(m_device.logical, &create_info, nullptr, &shader_module), //
+      fmt::format("creating shader module from file {}", file_path)
+  );
+
+  return shader_module;
+}
+
+void Context::transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout) const {
+  VkImageMemoryBarrier2 image_barrier{ .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+  image_barrier.pNext = nullptr;
+
+  image_barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  image_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+  image_barrier.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  image_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+
+  image_barrier.oldLayout = currentLayout;
+  image_barrier.newLayout = newLayout;
+
+  VkImageAspectFlags aspect_mask = (newLayout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+
+  image_barrier.subresourceRange.aspectMask     = aspect_mask;
+  image_barrier.subresourceRange.baseMipLevel   = 0;
+  image_barrier.subresourceRange.levelCount     = VK_REMAINING_MIP_LEVELS;
+  image_barrier.subresourceRange.baseArrayLayer = 0;
+  image_barrier.subresourceRange.layerCount     = VK_REMAINING_ARRAY_LAYERS;
+  image_barrier.image                           = image;
+
+  VkDependencyInfo dep_info{};
+  dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+  dep_info.pNext = nullptr;
+
+  dep_info.imageMemoryBarrierCount = 1;
+  dep_info.pImageMemoryBarriers    = &image_barrier;
+
+  vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
 void Context::set_debug_name(VkImage image, std::string_view name) {
