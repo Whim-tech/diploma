@@ -1,14 +1,18 @@
 {
     "cSpell.words": [
         "bugprone",
+        "CHECKVERSION",
         "cppcoreguidelines",
+        "DOESNT",
         "DWIN",
         "framebuffer",
         "fullscreen",
         "GLFW",
         "Hostx",
+        "illum",
         "Multisample",
         "nologo",
+        "raytracer",
         "raytracing",
         "SFLOAT",
         "sptr",

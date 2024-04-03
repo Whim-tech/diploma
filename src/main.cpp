@@ -2,9 +2,10 @@
 #include "glm/ext/matrix_transform.hpp"
 #include "input.hpp"
 #include "obj_loader.hpp"
+#include "vk/raytracer.hpp"
 #include "vk/renderer.hpp"
 
-#include <Volk/volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include <vma/vk_mem_alloc.h>
 
@@ -30,7 +31,7 @@ int main() {
     .options  = {//
       .is_resizable       = false, //
       .is_fullscreen      = false, //
-      .raytracing_enabled = false
+      .raytracing_enabled = true
       }
   };
 
@@ -42,15 +43,25 @@ int main() {
 
   whim::CameraManipulator cam_man{ input, camera };
 
-  whim::vk::Context  context{ config, w };
-  whim::vk::Renderer renderer{ context, cam_man };
+  whim::vk::Context context{ config, w };
 
   // whim::ObjLoader loader("../assets/obj/cube_multi.obj");
 
-  renderer.load_model("../assets/obj/cube_multi.obj");
-  renderer.load_model("../assets/obj/wuson.obj");
-  renderer.load_model("../assets/obj/sponza.obj", glm::scale(glm::mat4{ 1.f }, glm::vec3{ 0.01, 0.01, 0.01 }));
-  renderer.end_load();
+  // whim::vk::Renderer renderer{ context, cam_man };
+  // renderer.load_model("../assets/obj/cube_multi.obj");
+  // renderer.load_model("../assets/obj/wuson.obj");
+  // renderer.load_model("../assets/obj/sponza.obj", glm::scale(glm::mat4{ 1.f }, glm::vec3{ 0.01, 0.01, 0.01 }));
+  // renderer.end_load();
+
+  WINFO("CREATING RAYTRACER");
+  whim::vk::RayTracer raytracer{ context, cam_man };
+
+  WINFO("LOADING MESHES");
+  raytracer.load_mesh("../assets/obj/cube_multi.obj", "cube");
+  raytracer.load_model("cube");
+
+  raytracer.init_scene();
+  WINFO("MESHES LOADED");
 
   w.run([&]() {
     input.update();
@@ -67,7 +78,8 @@ int main() {
       w.close();
     }
 
-    renderer.draw();
+    // renderer.draw();
+    raytracer.draw();
 
     input.reset();
   });

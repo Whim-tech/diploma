@@ -25,6 +25,7 @@ void CameraManipulator::set_look_at(glm::vec3 up, glm::vec3 center, glm::vec3 ey
   m_camera.fov    = fov;
 }
 
+// TODO: move input from constructor to update function?...
 void CameraManipulator::update() {
 
   Input::state_t const &state    = m_input.get().state();

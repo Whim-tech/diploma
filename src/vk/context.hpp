@@ -5,20 +5,15 @@
 
 #include <GLFW/glfw3.h>
 
-#define VK_NO_PROTOTYPES
 #include <vk_mem_alloc.h>
-#include <Volk/volk.h>
+#include <vulkan/vulkan_core.h>
 
-#include "utility/types.hpp"
 #include "window.hpp"
 #include "config.hpp"
 
-namespace whim::vk {
+#include "whim.hpp"
 
-struct buffer_t {
-  handle<VkBuffer>      buffer     = nullptr;
-  handle<VmaAllocation> allocation = nullptr;
-};
+namespace whim::vk {
 
 struct swapchain_frame_t {
   VkImage     image      = VK_NULL_HANDLE;
@@ -42,9 +37,14 @@ public:
   //                .enable_instance_layer(...)
   ~Context();
 
-  void immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function);
+  Context(Context &&) noexcept            = default;
+  Context &operator=(Context &&) noexcept = default;
+  Context(const Context &)                = delete;
+  Context &operator=(const Context &)     = delete;
 
-  VkDeviceAddress get_buffer_device_address(VkBuffer buffer);
+  void immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) const;
+
+  VkDeviceAddress get_buffer_device_address(VkBuffer buffer) const;
 
   buffer_t create_buffer(
       VkDeviceSize size, const void* data_, //
@@ -65,11 +65,6 @@ public:
       VkCommandBuffer cmd, VkImage image, //
       VkImageLayout currentLayout, VkImageLayout newLayout
   ) const;
-
-  Context(Context &&) noexcept            = default;
-  Context &operator=(Context &&) noexcept = default;
-  Context(const Context &)                = delete;
-  Context &operator=(const Context &)     = delete;
 
   [[nodiscard]] VkInstance   instance() const;
   [[nodiscard]] VkSurfaceKHR surface() const;
@@ -106,22 +101,22 @@ public:
   //  - update m_swapchain structure
   // void on_changing_device(VkPhysicalDevice new_device, Window const& window);
 
-  void set_debug_name(VkImage image, std::string_view name);
-  void set_debug_name(VkImageView image_view, std::string_view name);
-  void set_debug_name(VkCommandPool command_pool, std::string_view name);
-  void set_debug_name(VkCommandBuffer command_buffer, std::string_view name);
-  void set_debug_name(VkFramebuffer frame_buffer, std::string_view name);
-  void set_debug_name(VkFence fence, std::string_view name);
-  void set_debug_name(VkSemaphore semaphore, std::string_view name);
-  void set_debug_name(VkPipeline pipeline, std::string_view name);
-  void set_debug_name(VkBuffer buffer, std::string_view name);
+  void set_debug_name(VkImage image, std::string_view name) const;
+  void set_debug_name(VkImageView image_view, std::string_view name) const;
+  void set_debug_name(VkCommandPool command_pool, std::string_view name) const;
+  void set_debug_name(VkCommandBuffer command_buffer, std::string_view name) const;
+  void set_debug_name(VkFramebuffer frame_buffer, std::string_view name) const;
+  void set_debug_name(VkFence fence, std::string_view name) const;
+  void set_debug_name(VkSemaphore semaphore, std::string_view name) const;
+  void set_debug_name(VkPipeline pipeline, std::string_view name) const;
+  void set_debug_name(VkBuffer buffer, std::string_view name) const;
 
 private:
   handle<VkInstance>               m_instance        = VK_NULL_HANDLE;
   handle<VkDebugUtilsMessengerEXT> m_debug_messenger = VK_NULL_HANDLE;
   handle<VkSurfaceKHR>             m_surface         = VK_NULL_HANDLE;
 
-  struct device_t {
+  struct {
     handle<VkPhysicalDevice> physical              = VK_NULL_HANDLE;
     handle<VkDevice>         logical               = VK_NULL_HANDLE;
     handle<VkQueue>          graphics_queue        = VK_NULL_HANDLE;
@@ -135,7 +130,7 @@ private:
   handle<VmaAllocator>  m_vma          = VK_NULL_HANDLE;
   handle<VkCommandPool> m_command_pool = VK_NULL_HANDLE;
 
-  struct swapchain_t {
+  struct {
     handle<VkSwapchainKHR> handle       = VK_NULL_HANDLE;
     VkPresentModeKHR       present_mode = {};
     VkFormat               image_format = {};
@@ -147,10 +142,10 @@ private:
 
   std::vector<swapchain_frame_t> m_frames{};
 
-  struct immediate_data_t {
-    handle<VkFence>         fence;
-    handle<VkCommandPool>   cmd_pool;
-    handle<VkCommandBuffer> cmd_buffer;
+  struct {
+    handle<VkFence>         fence      = VK_NULL_HANDLE;
+    handle<VkCommandPool>   cmd_pool   = VK_NULL_HANDLE;
+    handle<VkCommandBuffer> cmd_buffer = VK_NULL_HANDLE;
   } m_immediate_data;
 
   cref<Window> m_window_ref;

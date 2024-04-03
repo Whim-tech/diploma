@@ -5,15 +5,12 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
-#include <Volk/volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include "camera.hpp"
 #include "shader.h"
 #include "vk/context.hpp"
-#include "utility/types.hpp"
-
-#include <array>
-#include <vulkan/vulkan_core.h>
+#include "whim.hpp"
 
 namespace whim::vk {
 
@@ -52,18 +49,15 @@ private:
     int vertex_count = 0;
     int index_count  = 0;
 
-    glm::mat4 matrix = glm::mat4{1.f};
+    glm::mat4 matrix = glm::mat4{ 1.f };
   };
 
 private:
   handle<VkPipeline>       m_pipeline        = {};
   handle<VkPipelineLayout> m_pipeline_layout = {};
 
-  buffer_t m_vertex_buffer = {};
-  buffer_t m_index_buffer  = {};
 
   u32 m_current_frame = 0;
-
   // NOTE: size == m_frames_count
   std::vector<render_frame_data_t> m_frames_data = {};
 
@@ -71,14 +65,14 @@ private:
 
   buffer_t                        m_desc_buffer      = {};
   VkDeviceAddress                 m_desc_buffer_addr = {};
-  std::vector<object_description> m_object_desc{};
+  std::vector<mesh_description> m_object_desc{};
 
   std::vector<model_description_t> m_model_desc{};
 
   ref<Context>            m_context;
   cref<CameraManipulator> m_camera;
 
-  struct desc_t {
+  struct {
     handle<VkDescriptorSetLayout> layout = VK_NULL_HANDLE;
     handle<VkDescriptorPool>      pool   = VK_NULL_HANDLE;
     handle<VkDescriptorSet>       set    = VK_NULL_HANDLE;

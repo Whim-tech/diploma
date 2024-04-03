@@ -3,7 +3,6 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
-#include <vulkan/vulkan_core.h>
 
 #include "GLFW/glfw3.h"
 #include "camera.hpp"
@@ -16,7 +15,6 @@
 #include "vk/context.hpp"
 #include "vk/result.hpp"
 
-#define VK_NO_PROTOTYPES
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_vulkan.h"
 #include "imgui/imgui_impl_glfw.h"
@@ -376,13 +374,13 @@ Renderer::~Renderer() {
     vkDestroyDescriptorSetLayout(context.device(), m_desc.layout, nullptr);
     vkDestroyDescriptorPool(context.device(), m_desc.pool, nullptr);
 
-    vmaDestroyBuffer(context.vma_allocator(), m_desc_buffer.buffer, m_desc_buffer.allocation);
+    vmaDestroyBuffer(context.vma_allocator(), m_desc_buffer.handle, m_desc_buffer.allocation);
 
     for (auto &model : m_model_desc) {
-      vmaDestroyBuffer(context.vma_allocator(), model.vertex.buffer, model.vertex.allocation);
-      vmaDestroyBuffer(context.vma_allocator(), model.index.buffer, model.index.allocation);
-      vmaDestroyBuffer(context.vma_allocator(), model.material.buffer, model.material.allocation);
-      vmaDestroyBuffer(context.vma_allocator(), model.material_index.buffer, model.material_index.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.vertex.handle, model.vertex.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.index.handle, model.index.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.material.handle, model.material.allocation);
+      vmaDestroyBuffer(context.vma_allocator(), model.material_index.handle, model.material_index.allocation);
     }
 
     ImGui_ImplVulkan_Shutdown();
@@ -432,7 +430,7 @@ void Renderer::load_model(std::string_view const obj_path, glm::mat4 matrix) {
   std::vector<vertex> vertexes{};
   vertexes.reserve(loader.vertexes.size());
   for (auto &v : loader.vertexes) {
-    vertexes.push_back(vertex{ .pos = v.pos, .u_x = v.texture.x, .normal = v.norm, .u_y = v.texture.y });
+    // vertexes.push_back(vertex{ .pos = v.pos, .u_x = v.texture.x, .normal = v.norm, .u_y = v.texture.y });
   }
 
   std::vector<material> materials{};
@@ -462,18 +460,18 @@ void Renderer::load_model(std::string_view const obj_path, glm::mat4 matrix) {
   model.matrix         = matrix;
 
   auto number = m_model_desc.size();
-  context.set_debug_name(model.vertex.buffer, fmt::format("vertex buffer for model#{}", number));
-  context.set_debug_name(model.index.buffer, fmt::format("index buffer for model#{}", number));
-  context.set_debug_name(model.material.buffer, fmt::format("material buffer for model#{}", number));
-  context.set_debug_name(model.material_index.buffer, fmt::format("material_index buffer for model#{}", number));
+  context.set_debug_name(model.vertex.handle, fmt::format("vertex buffer for model#{}", number));
+  context.set_debug_name(model.index.handle, fmt::format("index buffer for model#{}", number));
+  context.set_debug_name(model.material.handle, fmt::format("material buffer for model#{}", number));
+  context.set_debug_name(model.material_index.handle, fmt::format("material_index buffer for model#{}", number));
 
-  object_description desc = {};
+  mesh_description desc = {};
 
   desc.txtOffset              = 0;
-  desc.vertex_address         = context.get_buffer_device_address(model.vertex.buffer);
-  desc.index_address          = context.get_buffer_device_address(model.index.buffer);
-  desc.material_address       = context.get_buffer_device_address(model.material.buffer);
-  desc.material_index_address = context.get_buffer_device_address(model.material_index.buffer);
+  desc.vertex_address         = context.get_buffer_device_address(model.vertex.handle);
+  desc.index_address          = context.get_buffer_device_address(model.index.handle);
+  desc.material_address       = context.get_buffer_device_address(model.material.handle);
+  desc.material_index_address = context.get_buffer_device_address(model.material_index.handle);
 
   m_object_desc.push_back(desc);
   m_model_desc.push_back(model);
@@ -481,8 +479,8 @@ void Renderer::load_model(std::string_view const obj_path, glm::mat4 matrix) {
 
 void Renderer::end_load() {
   m_desc_buffer      = m_context.get().create_buffer(m_object_desc, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-  m_desc_buffer_addr = m_context.get().get_buffer_device_address(m_desc_buffer.buffer);
-  m_context.get().set_debug_name(m_desc_buffer.buffer, "object description buffer");
+  m_desc_buffer_addr = m_context.get().get_buffer_device_address(m_desc_buffer.handle);
+  m_context.get().set_debug_name(m_desc_buffer.handle, "object description buffer");
 }
 
 void Renderer::draw() {
@@ -494,6 +492,7 @@ void Renderer::draw() {
   ImGui::NewFrame();
 
   // TODO: place ui render here
+
   ImGui::ShowDemoWindow();
 
   // make imgui calculate internal draw structures
@@ -502,8 +501,7 @@ void Renderer::draw() {
   constexpr u64 no_timeout = std::numeric_limits<u64>::max();
 
   render_frame_data_t data = m_frames_data[m_current_frame];
-  // wait until the gpu has finished rendering the last frame. Timeout of 1
-  // second
+  // wait until the gpu has finished rendering the last frame
   check(
       vkWaitForFences(context.device(), 1, &data.in_flight_fence, true, no_timeout), //
       fmt::format("waiting for render fence #{}", m_current_frame)
@@ -543,7 +541,6 @@ void Renderer::draw() {
 
   {
     VkRenderingAttachmentInfo color_attachment = {};
-
     color_attachment.sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     color_attachment.imageView        = context.swapchain_frames()[image_index].image_view;
     color_attachment.imageLayout      = VK_IMAGE_LAYOUT_GENERAL;
@@ -590,9 +587,9 @@ void Renderer::draw() {
 
       vkCmdPushConstants(data.command_buffer, m_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push_constant_t), &pc);
 
-      vkCmdBindIndexBuffer(data.command_buffer, m_model_desc[i].index.buffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdBindIndexBuffer(data.command_buffer, m_model_desc[i].index.handle, 0, VK_INDEX_TYPE_UINT32);
       VkDeviceSize offset{ 0 };
-      vkCmdBindVertexBuffers(data.command_buffer, 0, 1, &m_model_desc[i].vertex.buffer, &offset);
+      vkCmdBindVertexBuffers(data.command_buffer, 0, 1, &m_model_desc[i].vertex.handle, &offset);
 
       vkCmdDrawIndexed(data.command_buffer, m_model_desc[i].index_count, 1, 0, 0, 0);
     }

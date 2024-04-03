@@ -2,13 +2,13 @@
 
 #include <stdexcept>
 #include <string_view>
-#include <Volk/volk.h>
+#include <vulkan/vulkan_core.h>
 
 #include "utility/log.hpp"
 
 namespace whim::vk {
 
-inline std::string_view result_to_string(VkResult result);
+constexpr std::string_view result_to_string(VkResult result);
 
 inline void check(VkResult result, std::string_view description) {
   if (result != VK_SUCCESS) {
@@ -24,7 +24,7 @@ inline void check(VkResult result) {
   }
 }
 
-inline std::string_view result_to_string(VkResult result) {
+constexpr std::string_view result_to_string(VkResult result) {
 
   switch (result) {
     case VK_SUCCESS: return "VK_SUCCESS";

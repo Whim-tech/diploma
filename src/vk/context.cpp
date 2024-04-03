@@ -4,14 +4,15 @@
 #include <stdexcept>
 #include <fstream>
 
-#include <Volk/volk.h>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 
-#define VK_NO_PROTOTYPES
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 
 #include "whim.hpp"
 #include "vk/result.hpp"
+#include "vk/loader.hpp"
 
 namespace whim::vk {
 
@@ -19,7 +20,6 @@ Context::Context(config_t const &config, Window const &window) :
     m_window_ref(window) {
   WINFO("starting Context initialization");
 
-  volkInitialize();
   vkb::InstanceBuilder instance_builder;
 
   auto required_extensions = window.get_vulkan_required_extensions();
@@ -44,7 +44,6 @@ Context::Context(config_t const &config, Window const &window) :
 
   m_instance        = inst_result->instance;
   m_debug_messenger = inst_result->debug_messenger;
-  volkLoadInstance(m_instance);
   WINFO("created Vulkan Instance {}", (void*) m_instance);
 
   m_surface = window.create_surface(inst_result->instance);
@@ -55,21 +54,6 @@ Context::Context(config_t const &config, Window const &window) :
                  .set_surface(m_surface)
                  .add_required_extension(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
                  .set_minimum_version(1, 3);
-
-  if (config.options.raytracing_enabled) {
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature = {};
-    accel_feature.sType                                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature = {};
-    rt_pipeline_feature.sType                                         = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-
-    selector = selector //
-                   .add_required_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
-                   .add_required_extension_features(rt_pipeline_feature)
-                   .add_required_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
-                   .add_required_extension_features(accel_feature)
-                   .add_required_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-  }
 
   VkPhysicalDeviceVulkan13Features features13 = {};
   features13.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -82,6 +66,24 @@ Context::Context(config_t const &config, Window const &window) :
   VkPhysicalDeviceFeatures features = {};
   features.shaderInt64              = true;
   features.geometryShader           = true;
+
+  if (config.options.raytracing_enabled) {
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_feature      = {};
+    accel_feature.sType                                                 = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    accel_feature.accelerationStructure                                 = true;
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_pipeline_feature = {};
+    rt_pipeline_feature.sType                                         = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    rt_pipeline_feature.rayTracingPipeline                            = true;
+
+    selector = selector //
+                   .add_required_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
+                   .add_required_extension_features(rt_pipeline_feature)
+                   .add_required_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
+                   .add_required_extension_features(accel_feature)
+                   .add_required_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+  }
 
   auto ph_device_result = selector //
                               .set_required_features_13(features13)
@@ -97,11 +99,6 @@ Context::Context(config_t const &config, Window const &window) :
   m_device.physical = ph_device_result->physical_device;
   WINFO("physical device selected: {}", ph_device_result->properties.deviceName);
 
-  // WINFO("extensions:");
-  // for (auto extension : ph_device_result->get_available_extensions()) {
-  //   WINFO("{}", extension);
-  // }
-
   vkb::DeviceBuilder device_builder{ ph_device_result.value() };
   auto               device_result = device_builder.build();
 
@@ -112,8 +109,7 @@ Context::Context(config_t const &config, Window const &window) :
 
   m_device.logical = device_result->device;
   WINFO("created logical device {}", (void*) m_device.logical);
-
-  volkLoadDevice(m_device.logical);
+  load_vk_extensions(m_instance, vkGetInstanceProcAddr, m_device.logical, vkGetDeviceProcAddr);
 
   // TODO: add error handling (but its kinda should never fail)
   auto graphic                   = device_result->get_queue_index(vkb::QueueType::graphics);
@@ -128,16 +124,11 @@ Context::Context(config_t const &config, Window const &window) :
   m_device.present_family_index = present.value();
   m_device.present_queue        = device_result->get_queue(vkb::QueueType::present).value();
 
-  VmaVulkanFunctions vulkan_functions    = {};
-  vulkan_functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
-  vulkan_functions.vkGetDeviceProcAddr   = vkGetDeviceProcAddr;
-
   VmaAllocatorCreateInfo alloc_create_info = {};
   alloc_create_info.vulkanApiVersion       = VK_API_VERSION_1_2;
   alloc_create_info.instance               = m_instance;
   alloc_create_info.physicalDevice         = m_device.physical;
   alloc_create_info.device                 = m_device.logical;
-  alloc_create_info.pVulkanFunctions       = &vulkan_functions;
   alloc_create_info.flags                  = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
   check(
@@ -340,7 +331,7 @@ Context::~Context() {
   }
 }
 
-void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) {
+void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) const {
   check(vkResetFences(m_device.logical, 1, &m_immediate_data.fence), "reseting immediate fence");
   check(vkResetCommandBuffer(m_immediate_data.cmd_buffer, 0), "reseting immediate cmd buffers");
 
@@ -372,7 +363,7 @@ void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&functi
   check(vkWaitForFences(m_device.logical, 1, &m_immediate_data.fence, true, 9999999999), "waiting for fence");
 }
 
-VkDeviceAddress Context::get_buffer_device_address(VkBuffer buffer) {
+VkDeviceAddress Context::get_buffer_device_address(VkBuffer buffer) const {
   WASSERT(buffer != VK_NULL_HANDLE, "buffer should be valid");
 
   VkBufferDeviceAddressInfo info = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
@@ -401,7 +392,7 @@ buffer_t Context::create_buffer(
       vmaCreateBuffer(
           m_vma,                                       //
           &staging_buffer_info, &staging_buffer_alloc, //
-          &staging.buffer, &staging.allocation, nullptr
+          &staging.handle, &staging.allocation, nullptr
       ),
       "creating staging buffer"
   );
@@ -427,7 +418,7 @@ buffer_t Context::create_buffer(
       vmaCreateBuffer(
           m_vma,                                     //
           &result_buffer_info, &result_buffer_alloc, //
-          &result.buffer, &result.allocation, nullptr
+          &result.handle, &result.allocation, nullptr
       ),
       "creating destination buffer for transferring"
   );
@@ -438,10 +429,10 @@ buffer_t Context::create_buffer(
     copy_region.dstOffset = 0;
     copy_region.size      = size;
 
-    vkCmdCopyBuffer(cmd, staging.buffer, result.buffer, 1, &copy_region);
+    vkCmdCopyBuffer(cmd, staging.handle, result.handle, 1, &copy_region);
   });
 
-  vmaDestroyBuffer(m_vma, staging.buffer, staging.allocation);
+  vmaDestroyBuffer(m_vma, staging.handle, staging.allocation);
 
   return result;
 }
@@ -513,7 +504,7 @@ void Context::transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout
   vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
-void Context::set_debug_name(VkImage image, std::string_view name) {
+void Context::set_debug_name(VkImage image, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -527,7 +518,7 @@ void Context::set_debug_name(VkImage image, std::string_view name) {
   );
 }
 
-void Context::set_debug_name(VkImageView image_view, std::string_view name) {
+void Context::set_debug_name(VkImageView image_view, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -541,7 +532,7 @@ void Context::set_debug_name(VkImageView image_view, std::string_view name) {
   );
 }
 
-void Context::set_debug_name(VkCommandPool command_pool, std::string_view name) {
+void Context::set_debug_name(VkCommandPool command_pool, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -555,7 +546,7 @@ void Context::set_debug_name(VkCommandPool command_pool, std::string_view name) 
   );
 }
 
-void Context::set_debug_name(VkCommandBuffer command_buffer, std::string_view name) {
+void Context::set_debug_name(VkCommandBuffer command_buffer, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -569,7 +560,7 @@ void Context::set_debug_name(VkCommandBuffer command_buffer, std::string_view na
   );
 }
 
-void Context::set_debug_name(VkFramebuffer frame_buffer, std::string_view name) {
+void Context::set_debug_name(VkFramebuffer frame_buffer, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -583,7 +574,7 @@ void Context::set_debug_name(VkFramebuffer frame_buffer, std::string_view name) 
   );
 }
 
-void Context::set_debug_name(VkFence fence, std::string_view name) {
+void Context::set_debug_name(VkFence fence, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -597,7 +588,7 @@ void Context::set_debug_name(VkFence fence, std::string_view name) {
   );
 }
 
-void Context::set_debug_name(VkSemaphore semaphore, std::string_view name) {
+void Context::set_debug_name(VkSemaphore semaphore, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -611,7 +602,7 @@ void Context::set_debug_name(VkSemaphore semaphore, std::string_view name) {
   );
 }
 
-void Context::set_debug_name(VkPipeline pipeline, std::string_view name) {
+void Context::set_debug_name(VkPipeline pipeline, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
@@ -625,7 +616,7 @@ void Context::set_debug_name(VkPipeline pipeline, std::string_view name) {
   );
 }
 
-void Context::set_debug_name(VkBuffer buffer, std::string_view name) {
+void Context::set_debug_name(VkBuffer buffer, std::string_view name) const {
 
   VkDebugUtilsObjectNameInfoEXT info = {};
   info.sType                         = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;

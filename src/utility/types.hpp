@@ -32,6 +32,9 @@ concept NonConst = not std::is_const_v<T>;
 template<typename T>
 concept NonReference = not std::is_reference_v<T>;
 
+/*
+  This is used because references in classes break move semantics
+*/
 template<typename T>
   requires NonReference<T>
 using ref = std::reference_wrapper<T>;
@@ -43,8 +46,10 @@ using cref = std::reference_wrapper<T const>;
 /*
   This class used for pointer like handlers (GLFWwindow*, VkImage, etc...)
   MoveHandle automatically invalidate this handlers on move
+
+  on move: old_handle == invalid_state
 */
-template<typename T, T init_value>
+template<typename T, T invalid_state>
 class MoveHandle {
 
 public:
@@ -58,12 +63,12 @@ public:
   constexpr MoveHandle &operator=(MoveHandle const &other) = default;
 
   constexpr MoveHandle(MoveHandle &&other) noexcept :
-      m_handle(std::exchange(other.m_handle, init_value)) {}
+      m_handle(std::exchange(other.m_handle, invalid_state)) {}
 
   constexpr MoveHandle &operator=(MoveHandle &&other) noexcept {
     // since operator& is overloaded, we cant use (this != &other) condition
     if (this->m_handle != other.m_handle) {
-      m_handle = std::exchange(other.m_handle, init_value);
+      m_handle = std::exchange(other.m_handle, invalid_state);
     }
     return *this;
   }
@@ -75,21 +80,16 @@ public:
 
   constexpr operator T() const { return m_handle; }                  // NOLINT its okay to be implicit
 
-  constexpr operator bool() const { return m_handle != init_value; } // NOLINT its okay to be implicit
+  constexpr operator bool() const { return m_handle != invalid_state; } // NOLINT its okay to be implicit
 
   T const* operator&() const { return &m_handle; }                   // NOLINT i know what im doing xdd
 
   T* operator&() { return &m_handle; }                               // NOLINT i know what im doing xdd
 
 private:
-  T m_handle = init_value;
+  T m_handle = invalid_state;
 };
 
 template<typename T>
-using ptr_handle = MoveHandle<T, nullptr>;
-
-namespace vk {
-template<typename VulkanType>
-using handle = MoveHandle<VulkanType, nullptr>;
-}
+using ptr = MoveHandle<T*, nullptr>;
 } // namespace whim
