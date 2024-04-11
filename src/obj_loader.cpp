@@ -1,11 +1,10 @@
 #include "obj_loader.hpp"
 
 #include <filesystem>
-
 #include <stdexcept>
+
 #include <tiny_obj_loader.h>
 
-#include "utility/log.hpp"
 
 namespace whim {
 

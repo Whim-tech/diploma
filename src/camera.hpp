@@ -50,7 +50,7 @@ private:
   glm::mat4 m_inverse_view_matrix = glm::mat4{ 1.f };
   glm::mat4 m_inverse_proj_matrix = glm::mat4{ 1.f };
 
-  f32 m_speed = 3.f;
+  f32 m_speed = 30.f;
 
   cref<Input> m_input;
 };

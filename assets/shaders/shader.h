@@ -3,7 +3,7 @@
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"
-#include "Volk/volk.h"
+#include <vulkan/vulkan_core.h>
 #include <cstdint>
 
 using vec2 = glm::vec2;
@@ -22,19 +22,32 @@ using uint = unsigned int;
  #define END_BINDING() 
 #endif
 
-START_BINDING(SceneBindings)
-  eGlobals  = 0,  // Global uniform containing camera matrices
-  eTextures = 1   // Access to textures
+START_BINDING(SharedBindings)
+  TLAS = 0,
+  StorageImage = 1,
+  UniformBuffer  = 2,  
+  ObjectDescriptions = 3,
+  Textures = 4,
+  Spheres = 5,
+  total = 6
 END_BINDING();
 
 // clang-format on
 
-struct object_description {
-  uint64_t vertex_address;
-  uint64_t index_address;
-  uint64_t material_address;
-  uint64_t material_index_address;
-  int      txtOffset;
+struct vertex {
+  vec3 pos;
+  vec3 normal;
+  vec2 texture;
+};
+
+struct sphere_t {
+  vec3  center;
+  float radius;
+};
+
+struct aabb_t {
+  vec3 min;
+  vec3 max;
 };
 
 struct material {
@@ -51,6 +64,14 @@ struct material {
   int texture_id;
 };
 
+struct mesh_description {
+  int      txt_offset;
+  uint64_t vertex_address;
+  uint64_t index_address;
+  uint64_t material_address;
+  uint64_t material_index_address;
+};
+
 struct global_ubo {
   mat4 view;
   mat4 proj;
@@ -59,16 +80,8 @@ struct global_ubo {
 };
 
 struct push_constant_t {
-  mat4     mvp;
-  uint     obj_index;
-  uint64_t obj_address;
-};
-
-struct vertex {
-  vec3  pos;
-  float u_x;
-  vec3  normal;
-  float u_y;
+  mat4 mvp;
+  uint frame;
 };
 
 #ifdef __cplusplus
@@ -84,9 +97,9 @@ constexpr VkVertexInputBindingDescription vertex_description() {
   return description;
 }
 
-constexpr std::array<VkVertexInputAttributeDescription, 4> vertex_attributes_description() {
+constexpr std::array<VkVertexInputAttributeDescription, 3> vertex_attributes_description() {
 
-  std::array<VkVertexInputAttributeDescription, 4> attributes = {};
+  std::array<VkVertexInputAttributeDescription, 3> attributes = {};
 
   attributes[0].binding  = 0;
   attributes[0].location = 0;
@@ -94,19 +107,14 @@ constexpr std::array<VkVertexInputAttributeDescription, 4> vertex_attributes_des
   attributes[0].offset   = offsetof(vertex, pos);
 
   attributes[1].binding  = 0;
-  attributes[1].location = 1;
-  attributes[1].format   = VK_FORMAT_R32_SFLOAT;
-  attributes[1].offset   = offsetof(vertex, u_x);
+  attributes[1].location = 2;
+  attributes[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
+  attributes[1].offset   = offsetof(vertex, normal);
 
   attributes[2].binding  = 0;
-  attributes[2].location = 2;
-  attributes[2].format   = VK_FORMAT_R32G32B32_SFLOAT;
-  attributes[2].offset   = offsetof(vertex, normal);
-
-  attributes[3].binding  = 0;
-  attributes[3].location = 3;
-  attributes[3].format   = VK_FORMAT_R32_SFLOAT;
-  attributes[3].offset   = offsetof(vertex, u_y);
+  attributes[2].location = 3;
+  attributes[2].format   = VK_FORMAT_R32_SFLOAT;
+  attributes[2].offset   = offsetof(vertex, texture);
 
   return attributes;
 }

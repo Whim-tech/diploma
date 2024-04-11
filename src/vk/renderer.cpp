@@ -429,9 +429,9 @@ void Renderer::load_model(std::string_view const obj_path, glm::mat4 matrix) {
 
   std::vector<vertex> vertexes{};
   vertexes.reserve(loader.vertexes.size());
-  for (auto &v : loader.vertexes) {
-    // vertexes.push_back(vertex{ .pos = v.pos, .u_x = v.texture.x, .normal = v.norm, .u_y = v.texture.y });
-  }
+  // for (auto &v : loader.vertexes) {
+  //   // vertexes.push_back(vertex{ .pos = v.pos, .u_x = v.texture.x, .normal = v.norm, .u_y = v.texture.y });
+  // }
 
   std::vector<material> materials{};
   materials.reserve(loader.materials.size());
@@ -467,7 +467,7 @@ void Renderer::load_model(std::string_view const obj_path, glm::mat4 matrix) {
 
   mesh_description desc = {};
 
-  desc.txtOffset              = 0;
+  // desc.txtOffset              = 0;
   desc.vertex_address         = context.get_buffer_device_address(model.vertex.handle);
   desc.index_address          = context.get_buffer_device_address(model.index.handle);
   desc.material_address       = context.get_buffer_device_address(model.material.handle);
@@ -579,8 +579,8 @@ void Renderer::draw() {
     for (size_t i = 0; i < m_object_desc.size(); i += 1) {
 
       push_constant_t pc = {};
-      pc.obj_index       = (u32) i;
-      pc.obj_address     = m_desc_buffer_addr;
+      // pc.obj_index       = (u32) i;
+      // pc.obj_address     = m_desc_buffer_addr;
 
       pc.mvp = m_camera.get().proj_matrix() * m_camera.get().view_matrix() * m_model_desc[i].matrix;
       // pc.mvp = glm::rotate(pc.mvp, glm::radians(float(glfwGetTime()) * 100), glm::vec3{ 0.f, 1.f, 1.f });

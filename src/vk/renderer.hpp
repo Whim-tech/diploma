@@ -56,15 +56,14 @@ private:
   handle<VkPipeline>       m_pipeline        = {};
   handle<VkPipelineLayout> m_pipeline_layout = {};
 
-
   u32 m_current_frame = 0;
   // NOTE: size == m_frames_count
   std::vector<render_frame_data_t> m_frames_data = {};
 
   handle<VkDescriptorPool> m_imgui_desc_pool = VK_NULL_HANDLE;
 
-  buffer_t                        m_desc_buffer      = {};
-  VkDeviceAddress                 m_desc_buffer_addr = {};
+  buffer_t                      m_desc_buffer      = {};
+  VkDeviceAddress               m_desc_buffer_addr = {};
   std::vector<mesh_description> m_object_desc{};
 
   std::vector<model_description_t> m_model_desc{};

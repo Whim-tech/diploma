@@ -22,6 +22,8 @@ public:
       bool shift = false;
       bool alt   = false;
 
+      bool r = false;
+
       bool esc = false;
     } keyboard;
 

@@ -12,14 +12,14 @@ constexpr std::string_view result_to_string(VkResult result);
 
 inline void check(VkResult result, std::string_view description) {
   if (result != VK_SUCCESS) {
-    WERROR("[ERROR] Operation failed, got: {}, description: {}", result_to_string(result), description);
+    WERROR("Operation failed, got: {}, description: {}", result_to_string(result), description);
     throw std::runtime_error("Some Vulkan function failed");
   }
 }
 
 inline void check(VkResult result) {
   if (result != VK_SUCCESS) {
-    WERROR("[ERROR] Vulkan operation failed, got: {}", result_to_string(result));
+    WERROR("Vulkan operation failed, got: {}", result_to_string(result));
     throw std::runtime_error("Some Vulkan function failed");
   }
 }

@@ -23,6 +23,8 @@ void Input::update() {
   m_state.keyboard.alt            = glfwGetKey(m_window.get().handle(), GLFW_KEY_LEFT_ALT) == GLFW_PRESS;
   m_state.keyboard.esc            = glfwGetKey(m_window.get().handle(), GLFW_KEY_ESCAPE) == GLFW_PRESS;
 
+  m_state.keyboard.r = glfwGetKey(m_window.get().handle(), GLFW_KEY_R) == GLFW_PRESS;
+
   m_state.mouse.left_mouse_button   = glfwGetMouseButton(m_window.get().handle(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
   m_state.mouse.right_mouse_button  = glfwGetMouseButton(m_window.get().handle(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
   m_state.mouse.middle_mouse_button = glfwGetMouseButton(m_window.get().handle(), GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;

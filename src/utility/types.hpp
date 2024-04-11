@@ -78,13 +78,21 @@ public:
     return *this;
   }
 
-  constexpr operator T() const { return m_handle; }                  // NOLINT its okay to be implicit
+  constexpr operator T() const { return m_handle; }                     // NOLINT its okay to be implicit
 
   constexpr operator bool() const { return m_handle != invalid_state; } // NOLINT its okay to be implicit
 
-  T const* operator&() const { return &m_handle; }                   // NOLINT i know what im doing xdd
+  T const* operator&() const { return &m_handle; }                      // NOLINT i know what im doing xdd
 
-  T* operator&() { return &m_handle; }                               // NOLINT i know what im doing xdd
+  T* operator&() { return &m_handle; }                                  // NOLINT i know what im doing xdd
+
+  constexpr bool operator==(T value) { return m_handle == value; }
+
+  constexpr bool operator!=(T value) { return m_handle != value; }
+
+  constexpr bool operator==(MoveHandle<T, invalid_state> other) { return m_handle == other.m_handle; }
+
+  constexpr bool operator!=(MoveHandle<T, invalid_state> other) { return m_handle != other.m_handle; }
 
 private:
   T m_handle = invalid_state;

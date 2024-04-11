@@ -1,5 +1,8 @@
 {
     "cSpell.words": [
+        "aabb",
+        "aabbs",
+        "blit",
         "bugprone",
         "CHECKVERSION",
         "cppcoreguidelines",
@@ -12,10 +15,12 @@
         "illum",
         "Multisample",
         "nologo",
+        "rast",
         "raytracer",
         "raytracing",
         "SFLOAT",
         "sptr",
+        "stbi",
         "subpass",
         "Subpasses",
         "subresource",
@@ -24,6 +29,7 @@
         "swappable",
         "texcoord",
         "texcoords",
+        "texname",
         "vararg",
         "VOLK",
         "WERROR"

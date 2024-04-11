@@ -5,7 +5,7 @@
 
 #include <glm/glm.hpp>
 
-#include "utility/types.hpp"
+#include "whim.hpp"
 
 namespace whim {
 
@@ -27,6 +27,7 @@ struct obj_material {
   f32       dissolve      = {}; // 1 == opaque; 0 == fully transparent
   // illumination model (see http://www.fileformat.info/format/material/)
   int illum      = {};
+  // TODO: add textures
   int texture_id = -1;
 };
 

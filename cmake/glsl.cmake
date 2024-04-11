@@ -166,7 +166,7 @@ function(compile_glsl_directory)
   cmake_parse_arguments(COMPILE  "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN} )
 
     # Collecting all source files
-  file(GLOB GLSL_SOURCE_FILES
+  file(GLOB_RECURSE GLSL_SOURCE_FILES
     "${COMPILE_SRC}/*.comp"     # Compute
     "${COMPILE_SRC}/*.frag"     # Fragment
     "${COMPILE_SRC}/*.geom"     # Geometry

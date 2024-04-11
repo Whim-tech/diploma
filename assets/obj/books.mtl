@@ -1,0 +1,38 @@
+# 3ds Max Wavefront OBJ Exporter v0.99 - (c)2007 guruware
+# File Created: 15.06.2023 07:26:31
+
+newmtl Mat_BOOKS_ROODOU_WHITE_BEIGE_paper
+	Kd 0.1569 0.1569 0.1569
+	Ks 1.0000 1.0000 1.0000
+	Tr 0.0000
+	d 1.0000
+	Tf 1.0000 1.0000 1.0000
+	Pr 0.0000
+	Pm 0.0000
+	Pc 0.0000
+	Pcr 0.0000
+	Ni 1.2000
+	Ke 0.0000 0.0000 0.0000
+	illum 2
+	map_Kd textures/BOOKS ROODOU WHITE BEIGE-paper_D.png
+	map_Pr textures/BOOKS ROODOU WHITE BEIGE-paper_R.png
+	map_Pm textures/BOOKS ROODOU WHITE BEIGE-paper_M.png
+	norm textures/BOOKS ROODOU WHITE BEIGE-paper_N.png
+
+newmtl Mat_BOOKS_ROODOU_WHITE_BEIGE_books
+	Kd 0.1569 0.1569 0.1569
+	Ks 1.0000 1.0000 1.0000
+	Tr 0.0000
+	d 1.0000
+	Tf 1.0000 1.0000 1.0000
+	Pr 0.0000
+	Pm 0.0000
+	Pc 0.0000
+	Pcr 0.0000
+	Ni 1.2000
+	Ke 0.0000 0.0000 0.0000
+	illum 2
+	map_Kd textures/BOOKS ROODOU WHITE BEIGE-books_D.png
+	map_Pr textures/BOOKS ROODOU WHITE BEIGE-books_R.png
+	map_Pm textures/BOOKS ROODOU WHITE BEIGE-books_M.png
+	norm textures/BOOKS ROODOU WHITE BEIGE-books_N.png

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+#include <span>
 #include <vector>
 #include <string_view>
 
@@ -46,6 +48,10 @@ public:
 
   VkDeviceAddress get_buffer_device_address(VkBuffer buffer) const;
 
+  image_t create_image_on_gpu(VkImageCreateInfo image_info, u8* data, size_t size);
+
+  void generate_mipmaps(VkImage image, VkImageCreateInfo image_info);
+
   buffer_t create_buffer(
       VkDeviceSize size, const void* data_, //
       VkBufferUsageFlags usage_, VkMemoryPropertyFlags memProps = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
@@ -64,6 +70,12 @@ public:
   void transition_image(
       VkCommandBuffer cmd, VkImage image, //
       VkImageLayout currentLayout, VkImageLayout newLayout
+  ) const;
+
+  void transition_image(
+      VkCommandBuffer cmd, VkImage image,                   //
+      VkImageLayout currentLayout, VkImageLayout newLayout, //
+      VkImageSubresourceRange subresource
   ) const;
 
   [[nodiscard]] VkInstance   instance() const;
