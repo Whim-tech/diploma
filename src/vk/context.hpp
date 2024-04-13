@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-#include <span>
 #include <vector>
 #include <string_view>
 
@@ -62,6 +60,7 @@ public:
       std::vector<T>    &data, //
       VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_props_ = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   ) {
+    WASSERT(not data.empty(), "data vector should be non empty!");
     return create_buffer(sizeof(T) * data.size(), data.data(), usage, mem_props_);
   }
 

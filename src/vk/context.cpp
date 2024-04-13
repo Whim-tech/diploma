@@ -212,7 +212,7 @@ Context::Context(config_t const &config, Window const &window) :
   depth_view_info.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
 
   m_frames.reserve(m_swapchain.image_count);
-  for (int i = 0; i < m_swapchain.image_count; i += 1) {
+  for (u32 i = 0; i < m_swapchain.image_count; i += 1) {
     swapchain_frame_t frame = {};
     frame.image             = swapchain_images[i];
     frame.image_view        = swapchain_image_views[i];
@@ -334,6 +334,7 @@ Context::~Context() {
   }
 }
 
+// FIXME: && - explain yourself
 void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) const {
   // FIXME: wtf am i doing here?
   check(vkResetFences(m_device.logical, 1, &m_immediate_data.fence), "reseting immediate fence");
@@ -361,7 +362,7 @@ void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&functi
   submit.pCommandBufferInfos    = &cmd_info;
 
   // submit command buffer to the queue and execute it.
-  //  _renderFence will now block until the graphic commands finish execution
+  //  fence will now block until the graphic commands finish execution
   check(vkQueueSubmit2(m_device.graphics_queue, 1, &submit, m_immediate_data.fence), "submiting immediate cmd to queue");
 
   check(vkWaitForFences(m_device.logical, 1, &m_immediate_data.fence, true, 9999999999), "waiting for fence");
@@ -369,7 +370,7 @@ void Context::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&functi
 
 // STD::SPAN SUCKS LITERALLY PIESE OF GARBAGE
 image_t Context::create_image_on_gpu(VkImageCreateInfo image_info, u8* data, size_t size) {
-
+  WASSERT(size != 0, "zero size not allowed");
   buffer_t staging = {};
 
   VkBufferCreateInfo staging_info = {};
@@ -429,6 +430,7 @@ image_t Context::create_image_on_gpu(VkImageCreateInfo image_info, u8* data, siz
 }
 
 void Context::generate_mipmaps(VkImage image, VkImageCreateInfo image_info) {
+  WASSERT(image != VK_NULL_HANDLE, "invalid image handle");
 
   immediate_submit([&](VkCommandBuffer cmd) {
     VkImageMemoryBarrier barrier{};
@@ -477,7 +479,7 @@ void Context::generate_mipmaps(VkImage image, VkImageCreateInfo image_info) {
       blit.dstSubresource.baseArrayLayer = 0;
       blit.dstSubresource.layerCount     = 1;
 
-      vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+      vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
 
       barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
       barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -512,6 +514,7 @@ buffer_t Context::create_buffer(
     VkDeviceSize size, const void* data, //
     VkBufferUsageFlags usage, VkMemoryPropertyFlags mem_props
 ) {
+  WASSERT(size != 0, "zero size not allowed");
   buffer_t staging = {};
 
   VkBufferCreateInfo staging_buffer_info = {};
@@ -615,6 +618,8 @@ void Context::transition_image(
     VkImageLayout currentLayout, VkImageLayout newLayout, //
     VkImageSubresourceRange subresource
 ) const {
+  WASSERT(cmd != VK_NULL_HANDLE, "invalid command buffer");
+  WASSERT(image != VK_NULL_HANDLE, "invalid image handke");
   VkImageMemoryBarrier2 image_barrier{ .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
   image_barrier.pNext = nullptr;
 
@@ -640,6 +645,9 @@ void Context::transition_image(
 }
 
 void Context::transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout) const {
+
+  WASSERT(cmd != VK_NULL_HANDLE, "invalid command buffer");
+  WASSERT(image != VK_NULL_HANDLE, "invalid image handke");
 
   VkImageAspectFlags aspect_mask = (newLayout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 

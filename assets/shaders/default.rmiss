@@ -8,4 +8,4 @@
 
 layout(location = 0) rayPayloadInEXT hitPayload prd;
 
-void main() { prd.hitValue = vec3(0.3, 0.3, 0.3); }
+void main() { prd.hitValue = vec4(0.3, 0.3, 0.3, 1.0); }

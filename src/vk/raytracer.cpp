@@ -187,8 +187,6 @@ void RayTracer::update_uniform_buffer(VkCommandBuffer cmd) {
 }
 
 void RayTracer::create_default_texture() {
-  Context &context = m_context_ref;
-
   // TODO: add error handling
   m_default_texture = create_texture(default_texture_path).value();
   m_textures.push_back(m_default_texture);
@@ -1256,7 +1254,7 @@ void RayTracer::load_obj_file(std::string_view file_path, Mesh::raw_data &mesh) 
     material.illum         = mat.illum;
 
     if (not mat.diffuse_texname.empty()) {
-      material.texture_id = mesh.texture_names.size();
+      material.texture_id = (i32) mesh.texture_names.size();
       mesh.texture_names.push_back(mat.diffuse_texname);
     } else {
       material.texture_id = -1;
@@ -1352,7 +1350,7 @@ void RayTracer::load_mesh_to_gpu(Mesh &mesh) {
   mesh.description_index = m_description.data.size();
 
   mesh_description desc{};
-  desc.txt_offset             = m_textures.size();
+  desc.txt_offset             = (i32) m_textures.size();
   desc.vertex_address         = context.get_buffer_device_address(mesh.gpu.vertex.handle);
   desc.index_address          = context.get_buffer_device_address(mesh.gpu.index.handle);
   desc.material_address       = context.get_buffer_device_address(mesh.gpu.material.handle);
@@ -1572,7 +1570,7 @@ void RayTracer::load_spheres(std::vector<std::pair<sphere_t, u32>> &spheres, std
     m_textures.push_back(create_texture(file_path).value_or(m_default_texture));
   }
 
-  m_spheres.desc_index = m_description.data.size();
+  m_spheres.desc_index = (u32) m_description.data.size();
   m_description.data.push_back(desc);
 
   // BLAS creation
@@ -1893,8 +1891,8 @@ std::optional<texture_t> RayTracer::create_texture(std::string_view file_name) {
 
   VkSamplerCreateInfo sampler_create_info{};
   sampler_create_info.sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  sampler_create_info.magFilter               = VK_FILTER_LINEAR;
-  sampler_create_info.minFilter               = VK_FILTER_LINEAR;
+  sampler_create_info.magFilter               = VK_FILTER_NEAREST;
+  sampler_create_info.minFilter               = VK_FILTER_NEAREST;
   sampler_create_info.addressModeU            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   sampler_create_info.addressModeV            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   sampler_create_info.addressModeW            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -1904,7 +1902,7 @@ std::optional<texture_t> RayTracer::create_texture(std::string_view file_name) {
   sampler_create_info.unnormalizedCoordinates = VK_FALSE;
   sampler_create_info.compareEnable           = VK_FALSE;
   sampler_create_info.compareOp               = VK_COMPARE_OP_ALWAYS;
-  sampler_create_info.mipmapMode              = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  sampler_create_info.mipmapMode              = VK_SAMPLER_MIPMAP_MODE_NEAREST;
   sampler_create_info.maxLod                  = static_cast<float>(image_create_info.mipLevels);
   // sampler_create_info.minLod     = sampler_create_info.maxLod - 1.f;
   sampler_create_info.minLod     = 0;

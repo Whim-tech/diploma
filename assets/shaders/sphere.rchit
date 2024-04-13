@@ -46,7 +46,7 @@ void main() {
   material mat            = materials.m[material_index];
   uint     text_index     = mat.texture_id + desc.txt_offset;
 
-  prd.hitValue = texture(textureSamplers[text_index], vec2(u, v)).xyz;
+  prd.hitValue = texture(textureSamplers[text_index], vec2(u, v));
 
   // float k = 2.0;
   // float s = sign(sin(k * u) + sin(k * v));

@@ -4,9 +4,9 @@
 #include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan_core.h>
+#include <optional>
 
 #include "camera.hpp"
-#include "glm/fwd.hpp"
 #include "vk/context.hpp"
 #include "shader.h"
 
@@ -159,7 +159,7 @@ private:
       buffer_t                           buffer = {};
     } blas;
 
-    u32 desc_index = -1;
+    u32 desc_index = 0;
   } m_spheres;
 
   // TEXTURES DATA

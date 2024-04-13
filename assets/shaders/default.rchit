@@ -57,8 +57,8 @@ void main() {
   vec2 text_coord = v0.texture * b.x + v1.texture * b.y + v2.texture * b.z;
   if (mat.texture_id >= 0) {
     uint text_index = mat.texture_id + desc.txt_offset;
-    prd.hitValue    = texture(textureSamplers[text_index], text_coord).xyz;
+    prd.hitValue    = texture(textureSamplers[text_index], text_coord);
   } else {
-    prd.hitValue = texture(textureSamplers[0], text_coord).xyz;
+    prd.hitValue = texture(textureSamplers[0], text_coord);
   }
 }
