@@ -8,18 +8,23 @@
 #include <array>
 #include <filesystem>
 
+#include <external/stb_image.h>
+
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_vulkan.h"
 #include "imgui/imgui_impl_glfw.h"
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#include "tiny_gltf.h"
 #include "utility/align.hpp"
 #include "vk/context.hpp"
+#include "vk/types.hpp"
 #include "whim.hpp"
 
+#include <queue>
+#include <set>
 #include <stdexcept>
 #include <tiny_obj_loader.h>
 #include <vulkan/vulkan_core.h>
-
-#include <external/stb_image.h>
 
 namespace whim::vk {
 
@@ -39,7 +44,6 @@ RayTracer::RayTracer(Context &context, CameraManipulator const &man) :
 
   create_storage_image();
   create_uniform_buffer();
-  create_default_texture();
   create_offscreen_renderer();
 }
 
@@ -85,24 +89,35 @@ RayTracer::~RayTracer() {
 
     vmaDestroyBuffer(context.vma_allocator(), m_description.buffer.handle, m_description.buffer.allocation);
 
-    for (auto const &[k, v] : m_meshes) {
-      vmaDestroyBuffer(context.vma_allocator(), v.blas.buffer.handle, v.blas.buffer.allocation);
-      vkDestroyAccelerationStructureKHR(context.device(), v.blas.handle, nullptr);
+    // for (auto const &[k, v] : m_meshes) {
+    //   vmaDestroyBuffer(context.vma_allocator(), v.blas.buffer.handle, v.blas.buffer.allocation);
+    //   vkDestroyAccelerationStructureKHR(context.device(), v.blas.handle, nullptr);
 
-      vmaDestroyBuffer(context.vma_allocator(), v.gpu.index.handle, v.gpu.index.allocation);
-      vmaDestroyBuffer(context.vma_allocator(), v.gpu.vertex.handle, v.gpu.vertex.allocation);
-      vmaDestroyBuffer(context.vma_allocator(), v.gpu.material.handle, v.gpu.material.allocation);
-      vmaDestroyBuffer(context.vma_allocator(), v.gpu.material_index.handle, v.gpu.material_index.allocation);
+    //   vmaDestroyBuffer(context.vma_allocator(), v.gpu.index.handle, v.gpu.index.allocation);
+    //   vmaDestroyBuffer(context.vma_allocator(), v.gpu.vertex.handle, v.gpu.vertex.allocation);
+    //   vmaDestroyBuffer(context.vma_allocator(), v.gpu.material.handle, v.gpu.material.allocation);
+    //   vmaDestroyBuffer(context.vma_allocator(), v.gpu.material_index.handle, v.gpu.material_index.allocation);
+    // }
+
+    for (auto &blas : m_meshes.blases) {
+      vmaDestroyBuffer(context.vma_allocator(), blas.buffer.handle, blas.buffer.allocation);
+      vkDestroyAccelerationStructureKHR(context.device(), blas.handle, nullptr);
     }
+    vmaDestroyBuffer(context.vma_allocator(), m_meshes.device.pos_buffer.handle, m_meshes.device.pos_buffer.allocation);
+    vmaDestroyBuffer(context.vma_allocator(), m_meshes.device.index_buffer.handle, m_meshes.device.index_buffer.allocation);
+    vmaDestroyBuffer(context.vma_allocator(), m_meshes.device.normal_buffer.handle, m_meshes.device.normal_buffer.allocation);
+    vmaDestroyBuffer(context.vma_allocator(), m_meshes.device.uv_buffer.handle, m_meshes.device.uv_buffer.allocation);
+    vmaDestroyBuffer(context.vma_allocator(), m_meshes.device.material_buffer.handle, m_meshes.device.material_buffer.allocation);
+    vmaDestroyBuffer(context.vma_allocator(), m_meshes.device.prim_infos.handle, m_meshes.device.prim_infos.allocation);
 
-    // SPHERES
-    vmaDestroyBuffer(context.vma_allocator(), m_spheres.blas.buffer.handle, m_spheres.blas.buffer.allocation);
-    vkDestroyAccelerationStructureKHR(context.device(), m_spheres.blas.handle, nullptr);
+    // // SPHERES
+    // vmaDestroyBuffer(context.vma_allocator(), m_spheres.blas.buffer.handle, m_spheres.blas.buffer.allocation);
+    // vkDestroyAccelerationStructureKHR(context.device(), m_spheres.blas.handle, nullptr);
 
-    vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.spheres.handle, m_spheres.gpu_data.spheres.allocation);
-    vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.material.handle, m_spheres.gpu_data.material.allocation);
-    vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.material_index.handle, m_spheres.gpu_data.material_index.allocation);
-    vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.aabbs.handle, m_spheres.gpu_data.aabbs.allocation);
+    // vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.spheres.handle, m_spheres.gpu_data.spheres.allocation);
+    // vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.material.handle, m_spheres.gpu_data.material.allocation);
+    // vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.material_index.handle, m_spheres.gpu_data.material_index.allocation);
+    // vmaDestroyBuffer(context.vma_allocator(), m_spheres.gpu_data.aabbs.handle, m_spheres.gpu_data.aabbs.allocation);
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -188,8 +203,521 @@ void RayTracer::update_uniform_buffer(VkCommandBuffer cmd) {
 
 void RayTracer::create_default_texture() {
   // TODO: add error handling
-  m_default_texture = create_texture(default_texture_path).value();
+
+  if (!std::filesystem::exists(default_texture_path)) {
+    WERROR("Cant find default texture at path - {}", default_texture_path);
+    throw std::runtime_error("failed to find default texture at path");
+  }
+  int      width = 0, height = 0, channels = 0;
+  stbi_uc* stbi_pixels = stbi_load(default_texture_path.data(), &width, &height, &channels, STBI_rgb_alpha);
+
+  if (stbi_pixels == nullptr) {
+    WERROR("Failed to read default texture from file: {}", default_texture_path);
+    throw std::runtime_error("failed to read default texture at path");
+  }
+  std::vector<unsigned char> data(stbi_pixels, stbi_pixels + width * height * 4);
+
+  m_default_texture = create_texture(width, height, data, VK_FILTER_NEAREST, VK_FILTER_NEAREST);
   m_textures.push_back(m_default_texture);
+}
+
+void RayTracer::load_gltf_scene(std::string_view file_path) {
+
+  Context &context = m_context_ref;
+
+  load_gltf_raw(file_path);
+
+  load_gltf_device();
+
+  m_meshes.blases.reserve(m_meshes.raw.prim_meshes.size());
+  for (auto &primitive : m_meshes.raw.primitive_infos) {
+    m_meshes.blases.emplace_back(acceleration_structure_t{});
+    load_primitive_to_blas(primitive, m_meshes.blases.back());
+  }
+
+  m_blas_instances.reserve(m_meshes.raw.nodes.size());
+
+  for (auto &node : m_meshes.raw.nodes) {
+
+    glm::mat3x4          rtxT             = glm::transpose(node.world_matrix);
+    VkTransformMatrixKHR transform_matrix = {};
+    memcpy(&transform_matrix, glm::value_ptr(rtxT), sizeof(VkTransformMatrixKHR));
+
+    VkAccelerationStructureDeviceAddressInfoKHR acceleration_device_address_info{};
+    acceleration_device_address_info.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    acceleration_device_address_info.accelerationStructure = m_meshes.blases[node.primitive_mesh].handle;
+    auto device_address                                    = vkGetAccelerationStructureDeviceAddressKHR(context.device(), &acceleration_device_address_info);
+
+    VkAccelerationStructureInstanceKHR instance{};
+    instance.transform                              = transform_matrix;
+    instance.instanceCustomIndex                    = node.primitive_mesh;
+    instance.accelerationStructureReference         = device_address;
+    instance.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    instance.mask                                   = 0xFF;
+    instance.instanceShaderBindingTableRecordOffset = 0;
+    m_blas_instances.emplace_back(instance);
+  }
+
+  // create tlas
+  create_tlas();
+
+  init_descriptors();
+
+  // init_descriptors();
+  create_pipeline();
+}
+
+void RayTracer::load_gltf_raw(std::string_view file_path) {
+  if (!std::filesystem::exists(file_path)) {
+    WERROR("Cant parse gltf scene: file not found - {}", file_path);
+    throw std::runtime_error("cant find gltf scene");
+  }
+  tinygltf::TinyGLTF loader{};
+  std::string        warning{};
+  std::string        error{};
+  tinygltf::Model    tmodel{};
+
+  bool res = loader.LoadASCIIFromFile(&tmodel, &error, &warning, std::string(file_path));
+
+  if (not warning.empty()) {
+    WERROR(" GLTF WARNING: {}", warning);
+  }
+
+  if (not error.empty()) {
+    WERROR("error while loading gltf file {}, message:{}", file_path, error);
+  }
+
+  if (not res) {
+    WERROR("some how gltf return error code with empty error string, filename:{}", file_path);
+  }
+
+  // UPDATING MATERIALS
+  m_meshes.raw.materials.reserve(tmodel.materials.size());
+
+  for (auto const &tmat : tmodel.materials) {
+    material    m   = {};
+    auto const &pbr = tmat.pbrMetallicRoughness;
+
+    m.base_color_factor  = glm::vec3{ pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[3] };
+    m.base_color_texture = pbr.baseColorTexture.index;
+    m.roughness_factor   = (float) pbr.roughnessFactor;
+    m.metallic_factor    = (float) pbr.metallicFactor;
+    m.rm_texture         = pbr.metallicRoughnessTexture.index;
+    m.emissive_factor    = tmat.emissiveFactor.size() == 3 ? glm::vec3(tmat.emissiveFactor[0], tmat.emissiveFactor[1], tmat.emissiveFactor[2]) : glm::vec3(0.f);
+    m.e_texture          = tmat.emissiveTexture.index;
+    m.n_texture          = tmat.normalTexture.index;
+
+    m_meshes.raw.materials.emplace_back(m);
+  }
+  // add default if there is no materials
+  if (m_meshes.raw.materials.empty()) {
+    material m           = {};
+    m.base_color_texture = -1;
+    m.rm_texture         = -1;
+    m.n_texture          = -1;
+    m.e_texture          = -1;
+    m_meshes.raw.materials.push_back(m);
+  }
+
+  int         default_scene = tmodel.defaultScene > -1 ? tmodel.defaultScene : 0;
+  auto const &tscene        = tmodel.scenes[default_scene];
+
+  std::set<i32> used_meshes;
+  WASSERT(not tscene.nodes.empty(), "empty scene =/");
+
+  std::queue<i32> nodes_queue{};
+  for (auto node_idx : tscene.nodes) {
+    nodes_queue.push(node_idx);
+  }
+  // BFS for nodes tree and get all unique meshes
+  while (not nodes_queue.empty()) {
+    i32 node_idx = nodes_queue.front();
+    nodes_queue.pop();
+
+    auto const &tnode = tmodel.nodes[node_idx];
+    if (tnode.mesh > -1) used_meshes.insert(tnode.mesh);
+    for (int child : tnode.children) {
+      nodes_queue.push(child);
+    }
+  }
+
+  u32 index_count     = 0;
+  u32 primitive_count = 0;
+  for (i32 mesh_idx : used_meshes) {
+
+    std::vector<u32> primitives{};
+
+    auto const &tmesh = tmodel.meshes[mesh_idx];
+    for (const auto &tprimitive : tmesh.primitives) {
+      if (tprimitive.mode != 4) // Triangle
+        continue;
+
+      const auto &pos_accessor = tmodel.accessors[tprimitive.attributes.find("POSITION")->second];
+      if (tprimitive.indices > -1) {
+        const auto &index_accessor = tmodel.accessors[tprimitive.indices];
+        index_count += static_cast<uint32_t>(index_accessor.count);
+      } else {
+        index_count += static_cast<uint32_t>(pos_accessor.count);
+      }
+      primitives.emplace_back(primitive_count++);
+    }
+    m_meshes.raw.mesh_to_primitives[mesh_idx] = std::move(primitives);
+  }
+
+  m_meshes.raw.indices.reserve(index_count);
+
+  // Convert all mesh/primitives+ to a single primitive per mesh
+  for (const auto &m : used_meshes) {
+    auto &tmesh = tmodel.meshes[m];
+    for (const auto &tprimitive : tmesh.primitives) {
+      primitive_full_info result_mesh{};
+      result_mesh.material_index = std::max(0, tprimitive.material);
+      result_mesh.vertex_offset  = static_cast<uint32_t>(m_meshes.raw.positions.size());
+      result_mesh.index_offset   = static_cast<uint32_t>(m_meshes.raw.indices.size());
+
+      // TODO: primitive cache?...
+      // INDICES
+      if (tprimitive.indices > -1) {
+        const tinygltf::Accessor &index_accessor = tmodel.accessors[tprimitive.indices];
+
+        auto const &index_buffer_view = tmodel.bufferViews[index_accessor.bufferView];
+        auto const &index_buffer      = tmodel.buffers[index_buffer_view.buffer];
+
+        auto old_size = m_meshes.raw.indices.size();
+        m_meshes.raw.indices.resize(m_meshes.raw.indices.size() + index_accessor.count);
+
+        auto         offset = index_accessor.byteOffset + index_buffer_view.byteOffset;
+        const size_t stride = index_accessor.ByteStride(index_buffer_view);
+        WASSERT(stride != size_t(-1), "??");
+
+        for (int i = 0; i < (int) index_accessor.count; i += 1) {
+          if (index_accessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_INT) {
+            m_meshes.raw.indices[i + old_size] = *(u32*) (&index_buffer.data[stride * i + offset]);
+          } else if (index_accessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_SHORT) {
+            m_meshes.raw.indices[i + old_size] = *(u16*) (&index_buffer.data[stride * i + offset]);
+          } else if (index_accessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_BYTE) {
+            m_meshes.raw.indices[i + old_size] = *(u8*) (&index_buffer.data[stride * i + offset]);
+          } else {
+            WASSERT(false, "WHAT THE HELL?");
+          }
+        }
+
+        result_mesh.index_count = index_accessor.count;
+      } else {
+        // Primitive without indices, creating them
+        const auto &taccessor = tmodel.accessors[tprimitive.attributes.find("POSITION")->second];
+        for (u32 i = 0; i < taccessor.count; i++)
+          m_meshes.raw.indices.push_back(i);
+        result_mesh.index_count = taccessor.count;
+      }
+
+      // TODO: add cache check
+      // VERTICES
+      auto const &it_pos_accessor = tprimitive.attributes.find("POSITION");
+      WASSERT(it_pos_accessor != tprimitive.attributes.end(), "no position data");
+
+      auto const &pos_accessor = tmodel.accessors[it_pos_accessor->second];
+      result_mesh.vertex_count = pos_accessor.count;
+      WASSERT(pos_accessor.componentType == TINYGLTF_PARAMETER_TYPE_FLOAT, "");
+      WASSERT(pos_accessor.type == TINYGLTF_TYPE_VEC3, "");
+
+      auto const &pos_buffer_view = tmodel.bufferViews[pos_accessor.bufferView];
+      auto const &pos_buffer      = tmodel.buffers[pos_buffer_view.buffer];
+
+      auto old_size = m_meshes.raw.positions.size();
+      m_meshes.raw.positions.resize(m_meshes.raw.positions.size() + result_mesh.vertex_count);
+
+      auto         offset = pos_accessor.byteOffset + pos_buffer_view.byteOffset;
+      const size_t stride = pos_accessor.ByteStride(pos_buffer_view);
+      WASSERT(stride != size_t(-1), "??");
+
+      for (int i = 0; i < (int) result_mesh.vertex_count; i += 1) {
+        m_meshes.raw.positions[i + old_size] = *(glm::vec3*) (&pos_buffer.data[stride * i + offset]);
+      }
+
+      auto const &it_norm_accessor = tprimitive.attributes.find("NORMAL");
+      if (it_norm_accessor != tprimitive.attributes.end()) {
+        auto const &norm_accessor = tmodel.accessors[it_norm_accessor->second];
+        WASSERT(norm_accessor.componentType == TINYGLTF_PARAMETER_TYPE_FLOAT, "");
+        WASSERT(norm_accessor.type == TINYGLTF_TYPE_VEC3, "");
+
+        auto const &norm_buffer_view = tmodel.bufferViews[norm_accessor.bufferView];
+        auto const &norm_buffer      = tmodel.buffers[norm_buffer_view.buffer];
+
+        auto old_norm_size = m_meshes.raw.normals.size();
+        m_meshes.raw.normals.resize(m_meshes.raw.normals.size() + norm_accessor.count);
+
+        auto         norm_offset = norm_accessor.byteOffset + norm_buffer_view.byteOffset;
+        const size_t norm_stride = norm_accessor.ByteStride(norm_buffer_view);
+        WASSERT(norm_stride != size_t(-1), "??");
+
+        for (int i = 0; i < (int) norm_accessor.count; i += 1) {
+          m_meshes.raw.normals[i + old_norm_size] = *(glm::vec3*) (&norm_buffer.data[norm_stride * i + norm_offset]);
+        }
+      } else {
+        // generating normals
+        std::vector<glm::vec3> normals(result_mesh.vertex_count);
+        for (size_t i = 0; i < index_count; i += 3) {
+          uint32_t    ind0 = m_meshes.raw.indices[result_mesh.index_offset + i + 0];
+          uint32_t    ind1 = m_meshes.raw.indices[result_mesh.index_offset + i + 1];
+          uint32_t    ind2 = m_meshes.raw.indices[result_mesh.index_offset + i + 2];
+          const auto &pos0 = m_meshes.raw.positions[ind0 + result_mesh.vertex_offset];
+          const auto &pos1 = m_meshes.raw.positions[ind1 + result_mesh.vertex_offset];
+          const auto &pos2 = m_meshes.raw.positions[ind2 + result_mesh.vertex_offset];
+          const auto  v1   = glm::normalize(pos1 - pos0); // Many normalize, but when objects are really small the
+          const auto  v2   = glm::normalize(pos2 - pos0); // cross will go below nv_eps and the normal will be (0,0,0)
+          const auto  n    = glm::cross(v1, v2);
+          normals[ind0] += n;
+          normals[ind1] += n;
+          normals[ind2] += n;
+        }
+        for (auto &n : normals)
+          n = glm::normalize(n);
+        m_meshes.raw.normals.insert(m_meshes.raw.normals.end(), normals.begin(), normals.end());
+      }
+
+      // UVS
+      auto const &it_uv_accessor = tprimitive.attributes.find("TEXCOORD_0");
+      if (it_uv_accessor != tprimitive.attributes.end()) {
+        auto const &uv_accessor = tmodel.accessors[it_uv_accessor->second];
+        WASSERT(uv_accessor.componentType == TINYGLTF_PARAMETER_TYPE_FLOAT, "");
+        WASSERT(uv_accessor.type == TINYGLTF_TYPE_VEC2, "");
+
+        auto const &uv_buffer_view = tmodel.bufferViews[uv_accessor.bufferView];
+        auto const &uv_buffer      = tmodel.buffers[uv_buffer_view.buffer];
+
+        auto old_uv_size = m_meshes.raw.uvs.size();
+        m_meshes.raw.uvs.resize(m_meshes.raw.uvs.size() + uv_accessor.count);
+
+        auto         uv_offset = uv_accessor.byteOffset + uv_buffer_view.byteOffset;
+        const size_t uv_stride = uv_accessor.ByteStride(uv_buffer_view);
+        WASSERT(uv_stride != size_t(-1), "??");
+
+        for (int i = 0; i < (int) uv_accessor.count; i += 1) {
+          m_meshes.raw.uvs[i + old_uv_size] = *(glm::vec2*) (&uv_buffer.data[uv_stride * i + uv_offset]);
+        }
+      } else {
+        m_meshes.raw.uvs.insert(m_meshes.raw.uvs.end(), pos_accessor.count, glm::vec2(0, 0));
+      }
+
+      m_meshes.raw.primitive_infos.push_back(result_mesh);
+    }
+  }
+
+  // proccess all nodes
+
+  for (auto node_idx : tscene.nodes) {
+    process_node(tmodel, node_idx, glm::scale(glm::mat4{1.f}, glm::vec3{-1.f, 1.f, 1.f}));
+  }
+
+  // LOAD ALL TEXTURES (load default one if nothing is found)
+  if (tmodel.textures.empty()) {
+    create_default_texture();
+  }
+
+  for (auto &texture : tmodel.textures) {
+    auto &image = tmodel.images[texture.source];
+
+    WASSERT(image.bits == 8, "TODO");
+
+    m_textures.push_back(create_texture(image.width, image.height, image.image, VK_FILTER_NEAREST, VK_FILTER_NEAREST));
+  }
+}
+
+void RayTracer::process_node(const tinygltf::Model &tmodel, int &node_idx, const glm::mat4 &parent_matrix) {
+  const auto &tnode = tmodel.nodes[node_idx];
+
+  glm::mat4 translation_matrix = 1;
+  glm::mat4 scale_matrix       = 1;
+  glm::mat4 rotation_matrix    = 1;
+  glm::mat4 node_matrix        = 1;
+  glm::quat rotation{};
+
+  if (not tnode.translation.empty())
+    translation_matrix = glm::translate(glm::mat4(1), glm::vec3(tnode.translation[0], tnode.translation[1], tnode.translation[2]));
+  if (not tnode.scale.empty()) {
+    scale_matrix = glm::scale(glm::mat4(1), glm::vec3(tnode.scale[0], tnode.scale[1], tnode.scale[2]));
+  }
+  if (not tnode.rotation.empty()) {
+    rotation        = glm::make_quat(tnode.rotation.data());
+    rotation_matrix = glm::mat4_cast(rotation);
+  }
+  if (!tnode.matrix.empty()) {
+    node_matrix = glm::make_mat4(tnode.matrix.data());
+  }
+
+  glm::mat4 matrix       = translation_matrix * rotation_matrix * scale_matrix * node_matrix;
+  glm::mat4 world_matrix = parent_matrix * matrix;
+
+  if (tnode.mesh > -1) {
+    const auto &meshes = m_meshes.raw.mesh_to_primitives[tnode.mesh]; // A mesh could have many primitives
+    for (const auto &mesh : meshes) {
+      node node;
+      node.primitive_mesh = mesh;
+      node.world_matrix   = world_matrix;
+      m_meshes.raw.nodes.emplace_back(node);
+    }
+  }
+
+  for (auto child : tnode.children) {
+    process_node(tmodel, child, world_matrix);
+  }
+}
+
+void RayTracer::load_gltf_device() {
+  Context &context = m_context_ref;
+
+  auto flags                      = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  m_meshes.device.pos_buffer      = context.create_buffer(m_meshes.raw.positions, flags | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+  m_meshes.device.index_buffer    = context.create_buffer(m_meshes.raw.indices, flags | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+  m_meshes.device.normal_buffer   = context.create_buffer(m_meshes.raw.normals, flags);
+  m_meshes.device.uv_buffer       = context.create_buffer(m_meshes.raw.uvs, flags);
+  m_meshes.device.material_buffer = context.create_buffer(m_meshes.raw.materials, flags);
+
+  m_meshes.raw.prim_meshes.reserve(m_meshes.raw.primitive_infos.size());
+  for (auto &info : m_meshes.raw.primitive_infos) {
+    m_meshes.raw.prim_meshes.emplace_back(primitive_shader_info                           //
+                                          {
+                                              .index_offset   = info.index_offset,        //
+                                              .vertex_offset  = info.vertex_offset,       //
+                                              .material_index = (int) info.material_index //
+                                          });
+  }
+  m_meshes.device.prim_infos = context.create_buffer(m_meshes.raw.prim_meshes, flags);
+
+  scene_description scene{};
+  scene.pos_address       = context.get_buffer_device_address(m_meshes.device.pos_buffer.handle);
+  scene.index_address     = context.get_buffer_device_address(m_meshes.device.index_buffer.handle);
+  scene.normal_address    = context.get_buffer_device_address(m_meshes.device.normal_buffer.handle);
+  scene.uv_address        = context.get_buffer_device_address(m_meshes.device.uv_buffer.handle);
+  scene.material_address  = context.get_buffer_device_address(m_meshes.device.material_buffer.handle);
+  scene.prim_info_address = context.get_buffer_device_address(m_meshes.device.prim_infos.handle);
+
+  m_description.data.emplace_back(scene);
+
+  m_description.buffer = context.create_buffer(m_description.data, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+  context.set_debug_name(m_meshes.device.pos_buffer.handle, "position");
+  context.set_debug_name(m_meshes.device.index_buffer.handle, "index");
+  context.set_debug_name(m_meshes.device.normal_buffer.handle, "normal");
+  context.set_debug_name(m_meshes.device.uv_buffer.handle, "uv");
+  context.set_debug_name(m_meshes.device.material_buffer.handle, "material");
+  context.set_debug_name(m_meshes.device.prim_infos.handle, "primitive infos");
+  context.set_debug_name(m_description.buffer.handle, "scene description");
+}
+
+void RayTracer::load_primitive_to_blas(primitive_full_info &primitive, acceleration_structure_t &blas) {
+  Context const &context = m_context_ref;
+
+  VkDeviceAddress vertex_address      = context.get_buffer_device_address(m_meshes.device.pos_buffer.handle);
+  VkDeviceAddress index_address       = context.get_buffer_device_address(m_meshes.device.index_buffer.handle);
+  u32             max_primitive_count = primitive.index_count / 3;
+
+  // Describe buffer as array of VertexObj.
+  VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
+  triangles.sType                    = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+  triangles.vertexFormat             = VK_FORMAT_R32G32B32_SFLOAT;
+  triangles.vertexData.deviceAddress = vertex_address;
+  triangles.vertexStride             = sizeof(glm::vec3);
+  triangles.indexType                = VK_INDEX_TYPE_UINT32;
+  triangles.indexData.deviceAddress  = index_address;
+  triangles.maxVertex                = primitive.vertex_count;
+
+  // The bottom level acceleration structure contains one set of triangles as the input geometry
+  VkAccelerationStructureGeometryKHR acceleration_structure_geometry{};
+  acceleration_structure_geometry.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  acceleration_structure_geometry.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+  acceleration_structure_geometry.flags              = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
+  acceleration_structure_geometry.geometry.triangles = triangles;
+
+  // Get the size requirements for buffers involved in the acceleration structure build process
+  VkAccelerationStructureBuildGeometryInfoKHR acceleration_structure_build_geometry_info{};
+  acceleration_structure_build_geometry_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  acceleration_structure_build_geometry_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  acceleration_structure_build_geometry_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  acceleration_structure_build_geometry_info.geometryCount = 1;
+  acceleration_structure_build_geometry_info.pGeometries   = &acceleration_structure_geometry;
+
+  VkAccelerationStructureBuildSizesInfoKHR acceleration_structure_build_sizes_info{};
+  acceleration_structure_build_sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+  vkGetAccelerationStructureBuildSizesKHR(
+      context.device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &acceleration_structure_build_geometry_info, &max_primitive_count,
+      &acceleration_structure_build_sizes_info
+  );
+
+  VkBufferCreateInfo acc_buffer_info{};
+  acc_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  acc_buffer_info.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  acc_buffer_info.size        = acceleration_structure_build_sizes_info.accelerationStructureSize;
+  acc_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocationCreateInfo acc_buffer_alloc{};
+  acc_buffer_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+  check(
+      vmaCreateBuffer(
+          context.vma_allocator(),             //
+          &acc_buffer_info, &acc_buffer_alloc, //
+          &blas.buffer.handle, &blas.buffer.allocation, nullptr
+      ),
+      "creating buffer for blas"
+  );
+  context.set_debug_name(blas.buffer.handle, fmt::format("blas buffer for mesh"));
+
+  // Create the acceleration structure
+  VkAccelerationStructureCreateInfoKHR acceleration_structure_create_info{};
+  acceleration_structure_create_info.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+  acceleration_structure_create_info.buffer = blas.buffer.handle;
+  acceleration_structure_create_info.size   = acceleration_structure_build_sizes_info.accelerationStructureSize;
+  acceleration_structure_create_info.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+
+  check(vkCreateAccelerationStructureKHR(context.device(), &acceleration_structure_create_info, nullptr, &blas.handle));
+
+  // The actual build process starts here
+
+  buffer_t           scratch_buffer = {};
+  VkBufferCreateInfo scratch_buffer_info{};
+  scratch_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  scratch_buffer_info.usage       = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  scratch_buffer_info.size        = acceleration_structure_build_sizes_info.buildScratchSize;
+  scratch_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocationCreateInfo scratch_buffer_alloc = {};
+  scratch_buffer_alloc.usage                   = VMA_MEMORY_USAGE_CPU_TO_GPU;
+
+  check(
+      vmaCreateBuffer(
+          context.vma_allocator(),                     //
+          &scratch_buffer_info, &scratch_buffer_alloc, //
+          &scratch_buffer.handle, &scratch_buffer.allocation, nullptr
+      ),
+      "creating scratch buffer for blas"
+  );
+
+  VkAccelerationStructureBuildGeometryInfoKHR acceleration_build_geometry_info{};
+  acceleration_build_geometry_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  acceleration_build_geometry_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  acceleration_build_geometry_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  acceleration_build_geometry_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  acceleration_build_geometry_info.dstAccelerationStructure  = blas.handle;
+  acceleration_build_geometry_info.geometryCount             = 1;
+  acceleration_build_geometry_info.pGeometries               = &acceleration_structure_geometry;
+  acceleration_build_geometry_info.scratchData.deviceAddress = context.get_buffer_device_address(scratch_buffer.handle);
+
+  VkAccelerationStructureBuildRangeInfoKHR acceleration_structure_build_range_info;
+  acceleration_structure_build_range_info.firstVertex     = primitive.vertex_offset;
+  acceleration_structure_build_range_info.primitiveCount  = max_primitive_count;
+  acceleration_structure_build_range_info.primitiveOffset = primitive.index_offset * sizeof(uint32_t);
+  acceleration_structure_build_range_info.transformOffset = 0;
+
+  std::array<VkAccelerationStructureBuildRangeInfoKHR*, 1> acceleration_build_structure_range_infos = { &acceleration_structure_build_range_info };
+
+  context.immediate_submit([&](VkCommandBuffer cmd) {
+    vkCmdBuildAccelerationStructuresKHR(cmd, 1, &acceleration_build_geometry_info, acceleration_build_structure_range_infos.data());
+  });
+
+  vmaDestroyBuffer(context.vma_allocator(), scratch_buffer.handle, scratch_buffer.allocation);
 }
 
 void RayTracer::draw() {
@@ -801,7 +1329,7 @@ void RayTracer::init_descriptors() {
     VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,                       1},
     VkDescriptorPoolSize{             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,                       1},
     VkDescriptorPoolSize{            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,                       1},
-    VkDescriptorPoolSize{            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,                       2},
+    VkDescriptorPoolSize{            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,                       3},
     VkDescriptorPoolSize{    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (u32) m_textures.size()},
   };
 
@@ -841,7 +1369,7 @@ void RayTracer::init_descriptors() {
 
   // OBJECT DESCRIPTIONS
   VkDescriptorSetLayoutBinding description_buffer_binding{};
-  description_buffer_binding.binding         = SharedBindings::ObjectDescriptions;
+  description_buffer_binding.binding         = SharedBindings::SceneDescriptions;
   description_buffer_binding.descriptorCount = 1;
   description_buffer_binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   description_buffer_binding.stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
@@ -853,20 +1381,30 @@ void RayTracer::init_descriptors() {
   textures_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   textures_binding.stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
-  // SPHERES
-  VkDescriptorSetLayoutBinding spheres_buffer_binding{};
-  spheres_buffer_binding.binding         = SharedBindings::Spheres;
-  spheres_buffer_binding.descriptorCount = 1;
-  spheres_buffer_binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  spheres_buffer_binding.stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+  // // SPHERES
+  // VkDescriptorSetLayoutBinding spheres_buffer_binding{};
+  // spheres_buffer_binding.binding         = SharedBindings::Spheres;
+  // spheres_buffer_binding.descriptorCount = 1;
+  // spheres_buffer_binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  // spheres_buffer_binding.stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+
+  // PRIMITIVES INFO
+  VkDescriptorSetLayoutBinding primitives_buffer_binding{};
+  primitives_buffer_binding.binding         = SharedBindings::Primitives;
+  primitives_buffer_binding.descriptorCount = 1;
+  primitives_buffer_binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  primitives_buffer_binding.stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
 
   std::array<VkDescriptorSetLayoutBinding, 6> bindings = //
-      { tlas_layout_binding,                             //
+      {
+        tlas_layout_binding,                             //
         storage_image_binding,                           //
         uniform_buffer_binding,                          //
         description_buffer_binding,                      //
         textures_binding,                                //
-        spheres_buffer_binding };
+        primitives_buffer_binding
+        // spheres_buffer_binding ,                          //
+      };
 
   VkDescriptorSetLayoutCreateInfo layout_info{};
   layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -927,18 +1465,31 @@ void RayTracer::init_descriptors() {
   ubo_write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   ubo_write.pBufferInfo     = &ubo_descriptor;
 
-  VkDescriptorBufferInfo description_descriptor{};
-  description_descriptor.buffer = m_description.buffer.handle;
-  description_descriptor.offset = 0;
-  description_descriptor.range  = VK_WHOLE_SIZE;
+  VkDescriptorBufferInfo scene_descriptor{};
+  scene_descriptor.buffer = m_description.buffer.handle;
+  scene_descriptor.offset = 0;
+  scene_descriptor.range  = VK_WHOLE_SIZE;
 
-  VkWriteDescriptorSet description_write{};
-  description_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  description_write.dstSet          = m_descriptor.shared.set;
-  description_write.dstBinding      = SharedBindings::ObjectDescriptions;
-  description_write.descriptorCount = 1;
-  description_write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  description_write.pBufferInfo     = &description_descriptor;
+  VkWriteDescriptorSet scene_write{};
+  scene_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  scene_write.dstSet          = m_descriptor.shared.set;
+  scene_write.dstBinding      = SharedBindings::SceneDescriptions;
+  scene_write.descriptorCount = 1;
+  scene_write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  scene_write.pBufferInfo     = &scene_descriptor;
+
+  VkDescriptorBufferInfo primitive_descriptor{};
+  primitive_descriptor.buffer = m_meshes.device.prim_infos.handle;
+  primitive_descriptor.offset = 0;
+  primitive_descriptor.range  = VK_WHOLE_SIZE;
+
+  VkWriteDescriptorSet primitive_write{};
+  primitive_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  primitive_write.dstSet          = m_descriptor.shared.set;
+  primitive_write.dstBinding      = SharedBindings::Primitives;
+  primitive_write.descriptorCount = 1;
+  primitive_write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  primitive_write.pBufferInfo     = &primitive_descriptor;
 
   std::vector<VkDescriptorImageInfo> textures_info{ (size_t) m_textures.size(), VkDescriptorImageInfo{} };
   for (int i = 0; i < m_textures.size(); i += 1) {
@@ -954,27 +1505,28 @@ void RayTracer::init_descriptors() {
   textures_write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   textures_write.pImageInfo      = textures_info.data();
 
-  VkDescriptorBufferInfo sphere_descriptor{};
-  sphere_descriptor.buffer = m_spheres.gpu_data.spheres.handle;
-  sphere_descriptor.offset = 0;
-  sphere_descriptor.range  = VK_WHOLE_SIZE;
+  // VkDescriptorBufferInfo sphere_descriptor{};
+  // sphere_descriptor.buffer = m_spheres.gpu_data.spheres.handle;
+  // sphere_descriptor.offset = 0;
+  // sphere_descriptor.range  = VK_WHOLE_SIZE;
 
-  VkWriteDescriptorSet spheres_write{};
-  spheres_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  spheres_write.dstSet          = m_descriptor.shared.set;
-  spheres_write.dstBinding      = SharedBindings::Spheres;
-  spheres_write.descriptorCount = 1;
-  spheres_write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  spheres_write.pBufferInfo     = &sphere_descriptor;
+  // VkWriteDescriptorSet spheres_write{};
+  // spheres_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  // spheres_write.dstSet          = m_descriptor.shared.set;
+  // spheres_write.dstBinding      = SharedBindings::Spheres;
+  // spheres_write.descriptorCount = 1;
+  // spheres_write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  // spheres_write.pBufferInfo     = &sphere_descriptor;
 
   std::array<VkWriteDescriptorSet, 6> write_descriptor_sets = //
       {
         as_write,                                             //
         image_write,                                          //
         ubo_write,                                            //
-        description_write,                                    //
+        scene_write,                                          //
         textures_write,                                       //
-        spheres_write                                         //
+        primitive_write,
+        // spheres_write                                         //
       };
 
   vkUpdateDescriptorSets(context.device(), (u32) write_descriptor_sets.size(), write_descriptor_sets.data(), 0, nullptr);
@@ -1053,7 +1605,7 @@ void RayTracer::create_pipeline() {
   */
   auto const gen_count  = 1;
   auto const miss_count = 1;
-  auto const hit_count  = 2;
+  auto const hit_count  = 1;
   m_shader_groups.resize(gen_count + miss_count + hit_count);
 
   // 1. ray generation group
@@ -1081,12 +1633,12 @@ void RayTracer::create_pipeline() {
   m_shader_groups[stage_indices::close_hit].intersectionShader = VK_SHADER_UNUSED_KHR;
 
   // 4. sphere hit group
-  m_shader_groups[stage_indices::sphere_hit].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-  m_shader_groups[stage_indices::sphere_hit].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
-  m_shader_groups[stage_indices::sphere_hit].generalShader      = VK_SHADER_UNUSED_KHR;
-  m_shader_groups[stage_indices::sphere_hit].closestHitShader   = stage_indices::sphere_hit;
-  m_shader_groups[stage_indices::sphere_hit].anyHitShader       = VK_SHADER_UNUSED_KHR;
-  m_shader_groups[stage_indices::sphere_hit].intersectionShader = stage_indices::sphere_int;
+  // m_shader_groups[stage_indices::sphere_hit].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+  // m_shader_groups[stage_indices::sphere_hit].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
+  // m_shader_groups[stage_indices::sphere_hit].generalShader      = VK_SHADER_UNUSED_KHR;
+  // m_shader_groups[stage_indices::sphere_hit].closestHitShader   = stage_indices::sphere_hit;
+  // m_shader_groups[stage_indices::sphere_hit].anyHitShader       = VK_SHADER_UNUSED_KHR;
+  // m_shader_groups[stage_indices::sphere_hit].intersectionShader = stage_indices::sphere_int;
 
   // PIPELINE LAYOUT
   VkPushConstantRange pc_range = {};
@@ -1214,508 +1766,152 @@ void RayTracer::create_pipeline() {
   }
 }
 
-void RayTracer::load_mesh(std::string_view file_path, std::string_view mesh_name) {
-  Mesh mesh = {};
-
-  WINFO("loading {} from file:{}", mesh_name, file_path);
-  load_obj_file(file_path, mesh.raw);
-  WINFO("loading {} to gpu", mesh_name);
-  load_mesh_to_gpu(mesh);
-  WINFO("creating blas for {}", mesh_name);
-  load_mesh_to_blas(mesh);
-  m_meshes[std::string{ mesh_name }] = mesh;
-}
-
-void RayTracer::load_obj_file(std::string_view file_path, Mesh::raw_data &mesh) {
-  if (!std::filesystem::exists(file_path)) {
-    WERROR("Cant parse obj file: file not found - {}", file_path);
-    throw std::runtime_error("cant parse obj file");
-  }
-
-  tinyobj::ObjReader reader;
-  reader.ParseFromFile(std::string(file_path));
-
-  if (!reader.Valid()) {
-    WERROR("Cant parse obj file: file is not valid: {}:{}", file_path, reader.Error());
-    throw std::runtime_error("cant parse obj file");
-  }
-
-  // Collecting the material in the scene
-  for (const auto &mat : reader.GetMaterials()) {
-    material material      = {};
-    material.ambient       = glm::vec3(mat.ambient[0], mat.ambient[1], mat.ambient[2]);
-    material.diffuse       = glm::vec3(mat.diffuse[0], mat.diffuse[1], mat.diffuse[2]);
-    material.specular      = glm::vec3(mat.specular[0], mat.specular[1], mat.specular[2]);
-    material.emission      = glm::vec3(mat.emission[0], mat.emission[1], mat.emission[2]);
-    material.transmittance = glm::vec3(mat.transmittance[0], mat.transmittance[1], mat.transmittance[2]);
-    material.dissolve      = mat.dissolve;
-    material.ior           = mat.ior;
-    material.shininess     = mat.shininess;
-    material.illum         = mat.illum;
-
-    if (not mat.diffuse_texname.empty()) {
-      material.texture_id = (i32) mesh.texture_names.size();
-      mesh.texture_names.push_back(mat.diffuse_texname);
-    } else {
-      material.texture_id = -1;
-    }
-
-    mesh.materials.emplace_back(material);
-  }
-  // If there were none, add a default
-  if (mesh.materials.empty()) mesh.materials.emplace_back(material{ .texture_id = -1 });
-
-  const tinyobj::attrib_t &attrib = reader.GetAttrib();
-
-  for (const auto &shape : reader.GetShapes()) {
-
-    mesh.vertexes.reserve(shape.mesh.indices.size() + mesh.vertexes.size());
-    mesh.indices.reserve(shape.mesh.indices.size() + mesh.indices.size());
-    mesh.mat_indices.insert(mesh.mat_indices.end(), shape.mesh.material_ids.begin(), shape.mesh.material_ids.end());
-
-    for (const auto &index : shape.mesh.indices) {
-      vertex vertex       = {};
-      size_t vertex_index = (size_t) 3 * index.vertex_index;
-
-      vertex.pos = { attrib.vertices[vertex_index + 0], //
-                     attrib.vertices[vertex_index + 1], //
-                     attrib.vertices[vertex_index + 2] };
-
-      if (!attrib.normals.empty() && index.normal_index >= 0) {
-        size_t normal_index = (size_t) 3 * index.normal_index;
-        vertex.normal       = { attrib.normals[normal_index + 0], //
-                                attrib.normals[normal_index + 1], //
-                                attrib.normals[normal_index + 2] };
-      }
-
-      if (!attrib.texcoords.empty() && index.texcoord_index >= 0) {
-        size_t texture_index = (size_t) 2 * index.texcoord_index;
-        vertex.texture       = { attrib.texcoords[texture_index], //
-                                 1.0f - attrib.texcoords[texture_index + 1] };
-      }
-
-      mesh.vertexes.push_back(vertex);
-      mesh.indices.push_back(static_cast<int>(mesh.indices.size()));
-    }
-  }
-
-  // Fixing material indices
-  for (auto &mi : mesh.mat_indices) {
-    if (mi < 0 || mi > mesh.materials.size()) mi = 0;
-  }
-
-  // Compute normal when no normal were provided.
-  if (attrib.normals.empty()) {
-    for (size_t i = 0; i < mesh.indices.size(); i += 3) {
-      vertex &v0 = mesh.vertexes[mesh.indices[i + 0]];
-      vertex &v1 = mesh.vertexes[mesh.indices[i + 1]];
-      vertex &v2 = mesh.vertexes[mesh.indices[i + 2]];
-
-      glm::vec3 n = glm::normalize(glm::cross((v1.pos - v0.pos), (v2.pos - v0.pos)));
-      v0.normal   = n;
-      v1.normal   = n;
-      v2.normal   = n;
-    }
-  }
-}
-
-void RayTracer::load_mesh_to_gpu(Mesh &mesh) {
-
-  Context &context = m_context_ref.get();
-
-  // Converting from Srgb to linear
-  // TODO: what is going on in here =/
-  for (auto &m : mesh.raw.materials) {
-    m.ambient  = glm::pow(m.ambient, glm::vec3(2.2f));
-    m.diffuse  = glm::pow(m.diffuse, glm::vec3(2.2f));
-    m.specular = glm::pow(m.specular, glm::vec3(2.2f));
-  }
-
-  mesh.gpu.vertex_count = (u32) mesh.raw.vertexes.size();
-  mesh.gpu.index_count  = (u32) mesh.raw.indices.size();
-
-  VkBufferUsageFlags flag = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
-  // FIXME: each create buffer is queue submission that is bad
-  mesh.gpu.vertex         = context.create_buffer(mesh.raw.vertexes, flag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-  mesh.gpu.index          = context.create_buffer(mesh.raw.indices, flag | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-  mesh.gpu.material       = context.create_buffer(mesh.raw.materials, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-  mesh.gpu.material_index = context.create_buffer(mesh.raw.mat_indices, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-
-  auto number = m_meshes.size();
-  context.set_debug_name(mesh.gpu.vertex.handle, fmt::format("vertex buffer for mesh#{}", number));
-  context.set_debug_name(mesh.gpu.index.handle, fmt::format("index buffer for mesh#{}", number));
-  context.set_debug_name(mesh.gpu.material.handle, fmt::format("material buffer for mesh#{}", number));
-  context.set_debug_name(mesh.gpu.material_index.handle, fmt::format("material_index buffer for mesh#{}", number));
-
-  mesh.description_index = m_description.data.size();
-
-  mesh_description desc{};
-  desc.txt_offset             = (i32) m_textures.size();
-  desc.vertex_address         = context.get_buffer_device_address(mesh.gpu.vertex.handle);
-  desc.index_address          = context.get_buffer_device_address(mesh.gpu.index.handle);
-  desc.material_address       = context.get_buffer_device_address(mesh.gpu.material.handle);
-  desc.material_index_address = context.get_buffer_device_address(mesh.gpu.material_index.handle);
-
-  load_textures(mesh);
-
-  m_description.data.push_back(desc);
-}
-
-// TODO:
-void RayTracer::load_textures(Mesh &mesh) {
-
-  for (auto &text_name : mesh.raw.texture_names) {
-    // TODO: fix this
-    auto file_path = fmt::format("..\\assets\\obj\\{}", text_name);
-    m_textures.push_back(create_texture(file_path).value_or(m_default_texture));
-  }
-}
-
-void RayTracer::load_mesh_to_blas(Mesh &mesh) {
-
-  Context const &context = m_context_ref;
-
-  mesh_description desc = m_description.data[mesh.description_index];
-
-  VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
-  triangles.sType                    = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-  triangles.vertexFormat             = VK_FORMAT_R32G32B32_SFLOAT;
-  triangles.vertexData.deviceAddress = desc.vertex_address;
-  triangles.maxVertex                = mesh.gpu.vertex_count;
-  triangles.vertexStride             = sizeof(vertex);
-  triangles.indexType                = VK_INDEX_TYPE_UINT32;
-  triangles.indexData.deviceAddress  = desc.index_address;
-
-  // The bottom level acceleration structure contains one set of triangles as the input geometry
-  VkAccelerationStructureGeometryKHR acceleration_structure_geometry{};
-  acceleration_structure_geometry.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-  acceleration_structure_geometry.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-  acceleration_structure_geometry.flags              = VK_GEOMETRY_OPAQUE_BIT_KHR;
-  acceleration_structure_geometry.geometry.triangles = triangles;
-
-  // Get the size requirements for buffers involved in the acceleration structure build process
-  VkAccelerationStructureBuildGeometryInfoKHR acceleration_structure_build_geometry_info{};
-  acceleration_structure_build_geometry_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-  acceleration_structure_build_geometry_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-  acceleration_structure_build_geometry_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-  acceleration_structure_build_geometry_info.geometryCount = 1;
-  acceleration_structure_build_geometry_info.pGeometries   = &acceleration_structure_geometry;
-
-  const u32 triangle_count = mesh.gpu.index_count / 3;
-
-  VkAccelerationStructureBuildSizesInfoKHR acceleration_structure_build_sizes_info{};
-  acceleration_structure_build_sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-
-  vkGetAccelerationStructureBuildSizesKHR(
-      context.device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &acceleration_structure_build_geometry_info, &triangle_count,
-      &acceleration_structure_build_sizes_info
-  );
-
-  VkBufferCreateInfo acc_buffer_info{};
-  acc_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  acc_buffer_info.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-  acc_buffer_info.size        = acceleration_structure_build_sizes_info.accelerationStructureSize;
-  acc_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VmaAllocationCreateInfo acc_buffer_alloc{};
-  acc_buffer_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-  check(
-      vmaCreateBuffer(
-          context.vma_allocator(),             //
-          &acc_buffer_info, &acc_buffer_alloc, //
-          &mesh.blas.buffer.handle, &mesh.blas.buffer.allocation, nullptr
-      ),
-      "creating buffer for blas"
-  );
-
-  context.set_debug_name(mesh.blas.buffer.handle, fmt::format("blas buffer for mesh"));
-
-  // Create the acceleration structure
-  VkAccelerationStructureCreateInfoKHR acceleration_structure_create_info{};
-  acceleration_structure_create_info.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-  acceleration_structure_create_info.buffer = mesh.blas.buffer.handle;
-  acceleration_structure_create_info.size   = acceleration_structure_build_sizes_info.accelerationStructureSize;
-  acceleration_structure_create_info.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-
-  check(vkCreateAccelerationStructureKHR(context.device(), &acceleration_structure_create_info, nullptr, &mesh.blas.handle));
-
-  // The actual build process starts here
-
-  buffer_t           scratch_buffer = {};
-  VkBufferCreateInfo scratch_buffer_info{};
-  scratch_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  scratch_buffer_info.usage       = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-  scratch_buffer_info.size        = acceleration_structure_build_sizes_info.buildScratchSize;
-  scratch_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VmaAllocationCreateInfo scratch_buffer_alloc = {};
-  scratch_buffer_alloc.usage                   = VMA_MEMORY_USAGE_CPU_TO_GPU;
-
-  check(
-      vmaCreateBuffer(
-          context.vma_allocator(),                     //
-          &scratch_buffer_info, &scratch_buffer_alloc, //
-          &scratch_buffer.handle, &scratch_buffer.allocation, nullptr
-      ),
-      "creating scratch buffer for blas"
-  );
-
-  VkAccelerationStructureBuildGeometryInfoKHR acceleration_build_geometry_info{};
-  acceleration_build_geometry_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-  acceleration_build_geometry_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-  acceleration_build_geometry_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-  acceleration_build_geometry_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-  acceleration_build_geometry_info.dstAccelerationStructure  = mesh.blas.handle;
-  acceleration_build_geometry_info.geometryCount             = 1;
-  acceleration_build_geometry_info.pGeometries               = &acceleration_structure_geometry;
-  acceleration_build_geometry_info.scratchData.deviceAddress = context.get_buffer_device_address(scratch_buffer.handle);
-
-  VkAccelerationStructureBuildRangeInfoKHR acceleration_structure_build_range_info{};
-  acceleration_structure_build_range_info.primitiveCount  = triangle_count;
-  acceleration_structure_build_range_info.primitiveOffset = 0;
-  acceleration_structure_build_range_info.firstVertex     = 0;
-  acceleration_structure_build_range_info.transformOffset = 0;
-
-  std::array<VkAccelerationStructureBuildRangeInfoKHR*, 1> acceleration_build_structure_range_infos = { &acceleration_structure_build_range_info };
-
-  context.immediate_submit([&](VkCommandBuffer cmd) {
-    vkCmdBuildAccelerationStructuresKHR(cmd, 1, &acceleration_build_geometry_info, acceleration_build_structure_range_infos.data());
-  });
-
-  vmaDestroyBuffer(context.vma_allocator(), scratch_buffer.handle, scratch_buffer.allocation);
-}
-
-void RayTracer::load_model(std::string_view mesh_name, glm::mat4 transform) {
-  Context const &context = m_context_ref;
-
-  glm::mat3x4          rtxT             = glm::transpose(transform);
-  VkTransformMatrixKHR transform_matrix = {};
-  memcpy(&transform_matrix, glm::value_ptr(rtxT), sizeof(VkTransformMatrixKHR));
-
-  auto &mesh = m_meshes[std::string{ mesh_name }];
-  auto  blas = mesh.blas.handle;
-
-  // Get the bottom acceleration structure's handle, which will be used during the top level acceleration build
-  VkAccelerationStructureDeviceAddressInfoKHR acceleration_device_address_info{};
-  acceleration_device_address_info.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-  acceleration_device_address_info.accelerationStructure = blas;
-
-  auto device_address = vkGetAccelerationStructureDeviceAddressKHR(context.device(), &acceleration_device_address_info);
-
-  VkAccelerationStructureInstanceKHR blas_instance{};
-  blas_instance.transform                              = transform_matrix;
-  blas_instance.instanceCustomIndex                    = mesh.description_index;
-  blas_instance.mask                                   = 0xFF;
-  blas_instance.instanceShaderBindingTableRecordOffset = 0;
-  blas_instance.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-  blas_instance.accelerationStructureReference         = device_address;
-
-  m_blas_instances.push_back(blas_instance);
-}
-
-void RayTracer::load_spheres(std::vector<std::pair<sphere_t, u32>> &spheres, std::vector<material_options> &materials) {
-
-  Context &context = m_context_ref.get();
-
-  // LOADING TO CPU
-  m_spheres.raw.spheres.reserve(spheres.size());
-  m_spheres.raw.aabbs.reserve(spheres.size());
-  m_spheres.raw.mat_indices.reserve(spheres.size());
-  m_spheres.raw.materials.reserve(materials.size());
-
-  for (auto [s, index] : spheres) {
-    m_spheres.raw.spheres.push_back(s);
-    m_spheres.raw.mat_indices.push_back(index);
-
-    aabb_t aabb{};
-    aabb.min = s.center - glm::vec3(s.radius);
-    aabb.max = s.center + glm::vec3(s.radius);
-    m_spheres.raw.aabbs.push_back(aabb);
-  }
-
-  for (auto &option : materials) {
-    material m{};
-    m.diffuse = option.color;
-    if (not option.texture_name.empty()) {
-      m.texture_id = (i32) m_spheres.raw.texture_names.size();
-      m_spheres.raw.texture_names.push_back(option.texture_name);
-    }
-
-    m_spheres.raw.materials.push_back(m);
-  }
-
-  // LOADING TO GPU
-  m_spheres.gpu_data.spheres_total = (u32) m_spheres.raw.spheres.size();
-
-  VkBufferUsageFlags flag = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
-
-  m_spheres.gpu_data.spheres        = context.create_buffer(m_spheres.raw.spheres, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-  m_spheres.gpu_data.material       = context.create_buffer(m_spheres.raw.materials, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-  m_spheres.gpu_data.material_index = context.create_buffer(m_spheres.raw.mat_indices, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-  m_spheres.gpu_data.aabbs          = context.create_buffer(m_spheres.raw.aabbs, flag);
-
-  context.set_debug_name(m_spheres.gpu_data.spheres.handle, "spheres data");
-  context.set_debug_name(m_spheres.gpu_data.material.handle, "spheres material");
-  context.set_debug_name(m_spheres.gpu_data.material_index.handle, "spheres material_index");
-  context.set_debug_name(m_spheres.gpu_data.aabbs.handle, "aabbs");
-
-  mesh_description desc{};
-  desc.txt_offset             = (u32) m_textures.size();
-  desc.material_address       = context.get_buffer_device_address(m_spheres.gpu_data.material.handle);
-  desc.material_index_address = context.get_buffer_device_address(m_spheres.gpu_data.material_index.handle);
-
-  for (auto &text_name : m_spheres.raw.texture_names) {
-    auto file_path = fmt::format("../assets/textures/{}", text_name);
-    m_textures.push_back(create_texture(file_path).value_or(m_default_texture));
-  }
-
-  m_spheres.desc_index = (u32) m_description.data.size();
-  m_description.data.push_back(desc);
-
-  // BLAS creation
-
-  VkAccelerationStructureGeometryAabbsDataKHR aabbs{};
-  aabbs.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
-  aabbs.data.deviceAddress = context.get_buffer_device_address(m_spheres.gpu_data.aabbs.handle);
-  aabbs.stride             = sizeof(aabb_t);
-
-  // The bottom level acceleration structure
-  VkAccelerationStructureGeometryKHR acceleration_structure_geometry{};
-  acceleration_structure_geometry.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-  acceleration_structure_geometry.geometryType   = VK_GEOMETRY_TYPE_AABBS_KHR;
-  acceleration_structure_geometry.flags          = VK_GEOMETRY_OPAQUE_BIT_KHR;
-  acceleration_structure_geometry.geometry.aabbs = aabbs;
-
-  // Get the size requirements for buffers involved in the acceleration structure build process
-  VkAccelerationStructureBuildGeometryInfoKHR acceleration_structure_build_geometry_info{};
-  acceleration_structure_build_geometry_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-  acceleration_structure_build_geometry_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-  acceleration_structure_build_geometry_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-  acceleration_structure_build_geometry_info.geometryCount = 1;
-  acceleration_structure_build_geometry_info.pGeometries   = &acceleration_structure_geometry;
-
-  VkAccelerationStructureBuildSizesInfoKHR acceleration_structure_build_sizes_info{};
-  acceleration_structure_build_sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-
-  vkGetAccelerationStructureBuildSizesKHR(
-      context.device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &acceleration_structure_build_geometry_info, &m_spheres.gpu_data.spheres_total,
-      &acceleration_structure_build_sizes_info
-  );
-
-  VkBufferCreateInfo acc_buffer_info{};
-  acc_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  acc_buffer_info.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-  acc_buffer_info.size        = acceleration_structure_build_sizes_info.accelerationStructureSize;
-  acc_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VmaAllocationCreateInfo acc_buffer_alloc{};
-  acc_buffer_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-  check(
-      vmaCreateBuffer(
-          context.vma_allocator(),             //
-          &acc_buffer_info, &acc_buffer_alloc, //
-          &m_spheres.blas.buffer.handle, &m_spheres.blas.buffer.allocation, nullptr
-      ),
-      "creating buffer for spheres blas"
-  );
-  context.set_debug_name(m_spheres.blas.buffer.handle, fmt::format("spheres blas buffer"));
-
-  // Create the acceleration structure
-  VkAccelerationStructureCreateInfoKHR acceleration_structure_create_info{};
-  acceleration_structure_create_info.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-  acceleration_structure_create_info.buffer = m_spheres.blas.buffer.handle;
-  acceleration_structure_create_info.size   = acceleration_structure_build_sizes_info.accelerationStructureSize;
-  acceleration_structure_create_info.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-
-  check(vkCreateAccelerationStructureKHR(context.device(), &acceleration_structure_create_info, nullptr, &m_spheres.blas.handle));
-
-  // The actual build process starts here
-
-  buffer_t           scratch_buffer = {};
-  VkBufferCreateInfo scratch_buffer_info{};
-  scratch_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  scratch_buffer_info.usage       = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-  scratch_buffer_info.size        = acceleration_structure_build_sizes_info.buildScratchSize;
-  scratch_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VmaAllocationCreateInfo scratch_buffer_alloc = {};
-  scratch_buffer_alloc.usage                   = VMA_MEMORY_USAGE_CPU_TO_GPU;
-
-  check(
-      vmaCreateBuffer(
-          context.vma_allocator(),                     //
-          &scratch_buffer_info, &scratch_buffer_alloc, //
-          &scratch_buffer.handle, &scratch_buffer.allocation, nullptr
-      ),
-      "creating scratch buffer for spheres blas"
-  );
-
-  VkAccelerationStructureBuildGeometryInfoKHR acceleration_build_geometry_info{};
-  acceleration_build_geometry_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-  acceleration_build_geometry_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-  acceleration_build_geometry_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-  acceleration_build_geometry_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-  acceleration_build_geometry_info.dstAccelerationStructure  = m_spheres.blas.handle;
-  acceleration_build_geometry_info.geometryCount             = 1;
-  acceleration_build_geometry_info.pGeometries               = &acceleration_structure_geometry;
-  acceleration_build_geometry_info.scratchData.deviceAddress = context.get_buffer_device_address(scratch_buffer.handle);
-
-  VkAccelerationStructureBuildRangeInfoKHR acceleration_structure_build_range_info{};
-  acceleration_structure_build_range_info.firstVertex     = 0;
-  acceleration_structure_build_range_info.primitiveCount  = (u32) m_spheres.gpu_data.spheres_total;
-  acceleration_structure_build_range_info.primitiveOffset = 0;
-  acceleration_structure_build_range_info.transformOffset = 0;
-
-  std::array<VkAccelerationStructureBuildRangeInfoKHR*, 1> acceleration_build_structure_range_infos = { &acceleration_structure_build_range_info };
-  context.immediate_submit([&](VkCommandBuffer cmd) {
-    vkCmdBuildAccelerationStructuresKHR(cmd, 1, &acceleration_build_geometry_info, acceleration_build_structure_range_infos.data());
-  });
-
-  vmaDestroyBuffer(context.vma_allocator(), scratch_buffer.handle, scratch_buffer.allocation);
-
-  glm::mat3x4          rtxT             = glm::transpose(glm::mat4{ 1.f });
-  VkTransformMatrixKHR transform_matrix = {};
-  memcpy(&transform_matrix, glm::value_ptr(rtxT), sizeof(VkTransformMatrixKHR));
-  auto blas = m_spheres.blas.handle;
-
-  VkAccelerationStructureDeviceAddressInfoKHR acceleration_device_address_info{};
-  acceleration_device_address_info.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-  acceleration_device_address_info.accelerationStructure = blas;
-
-  auto device_address = vkGetAccelerationStructureDeviceAddressKHR(context.device(), &acceleration_device_address_info);
-
-  VkAccelerationStructureInstanceKHR blas_instance{};
-  blas_instance.transform                              = transform_matrix;
-  blas_instance.instanceCustomIndex                    = m_spheres.desc_index;
-  blas_instance.mask                                   = 0xFF;
-  blas_instance.instanceShaderBindingTableRecordOffset = 1;
-  blas_instance.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-  blas_instance.accelerationStructureReference         = device_address;
-
-  m_blas_instances.push_back(blas_instance);
-
-  // Instance creation
-}
-
-void RayTracer::init_scene() {
-  Context &context = m_context_ref;
-
-  // description buffer
-  m_description.buffer = context.create_buffer(
-      m_description.data, //
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-  );
-  m_description.address = context.get_buffer_device_address(m_description.buffer.handle);
-  context.set_debug_name(m_description.buffer.handle, "mesh description buffer");
-
-  // create tlas
-  create_tlas();
-
-  init_descriptors();
-  create_pipeline();
-}
+// void RayTracer::load_spheres(std::vector<std::pair<sphere_t, u32>> &spheres, std::vector<material_options> &materials) {
+//   Context &context = m_context_ref.get();
+//   // LOADING TO CPU
+//   m_spheres.raw.spheres.reserve(spheres.size());
+//   m_spheres.raw.aabbs.reserve(spheres.size());
+//   m_spheres.raw.mat_indices.reserve(spheres.size());
+//   m_spheres.raw.materials.reserve(materials.size());
+//   for (auto [s, index] : spheres) {
+//     m_spheres.raw.spheres.push_back(s);
+//     m_spheres.raw.mat_indices.push_back(index);
+//     aabb_t aabb{};
+//     aabb.min = s.center - glm::vec3(s.radius);
+//     aabb.max = s.center + glm::vec3(s.radius);
+//     m_spheres.raw.aabbs.push_back(aabb);
+//   }
+//   for (auto &option : materials) {
+//     material m{};
+//     m.base_color_factor = option.color;
+//     if (not option.texture_name.empty()) {
+//       m.base_color_texture = (i32) m_spheres.raw.texture_names.size();
+//       m_spheres.raw.texture_names.push_back(option.texture_name);
+//     }
+//     m_spheres.raw.materials.push_back(m);
+//   }
+//   // LOADING TO GPU
+//   m_spheres.gpu_data.spheres_total = (u32) m_spheres.raw.spheres.size();
+//   VkBufferUsageFlags flag = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+//   m_spheres.gpu_data.spheres        = context.create_buffer(m_spheres.raw.spheres, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+//   m_spheres.gpu_data.material       = context.create_buffer(m_spheres.raw.materials, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+//   m_spheres.gpu_data.material_index = context.create_buffer(m_spheres.raw.mat_indices, flag | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+//   m_spheres.gpu_data.aabbs          = context.create_buffer(m_spheres.raw.aabbs, flag);
+//   context.set_debug_name(m_spheres.gpu_data.spheres.handle, "spheres data");
+//   context.set_debug_name(m_spheres.gpu_data.material.handle, "spheres material");
+//   context.set_debug_name(m_spheres.gpu_data.material_index.handle, "spheres material_index");
+//   context.set_debug_name(m_spheres.gpu_data.aabbs.handle, "aabbs");
+//   mesh_description desc{};
+//   desc.txt_offset             = (u32) m_textures.size();
+//   desc.material_address       = context.get_buffer_device_address(m_spheres.gpu_data.material.handle);
+//   desc.material_index_address = context.get_buffer_device_address(m_spheres.gpu_data.material_index.handle);
+//   for (auto &text_name : m_spheres.raw.texture_names) {
+//     auto file_path = fmt::format("../assets/textures/{}", text_name);
+//     m_textures.push_back(create_texture(file_path).value_or(m_default_texture));
+//   }
+//   m_spheres.desc_index = (u32) m_description.data.size();
+//   m_description.data.push_back(desc);
+//   // BLAS creation
+//   VkAccelerationStructureGeometryAabbsDataKHR aabbs{};
+//   aabbs.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
+//   aabbs.data.deviceAddress = context.get_buffer_device_address(m_spheres.gpu_data.aabbs.handle);
+//   aabbs.stride             = sizeof(aabb_t);
+//   // The bottom level acceleration structure
+//   VkAccelerationStructureGeometryKHR acceleration_structure_geometry{};
+//   acceleration_structure_geometry.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+//   acceleration_structure_geometry.geometryType   = VK_GEOMETRY_TYPE_AABBS_KHR;
+//   acceleration_structure_geometry.flags          = VK_GEOMETRY_OPAQUE_BIT_KHR;
+//   acceleration_structure_geometry.geometry.aabbs = aabbs;
+//   // Get the size requirements for buffers involved in the acceleration structure build process
+//   VkAccelerationStructureBuildGeometryInfoKHR acceleration_structure_build_geometry_info{};
+//   acceleration_structure_build_geometry_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+//   acceleration_structure_build_geometry_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+//   acceleration_structure_build_geometry_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+//   acceleration_structure_build_geometry_info.geometryCount = 1;
+//   acceleration_structure_build_geometry_info.pGeometries   = &acceleration_structure_geometry;
+//   VkAccelerationStructureBuildSizesInfoKHR acceleration_structure_build_sizes_info{};
+//   acceleration_structure_build_sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+//   vkGetAccelerationStructureBuildSizesKHR(
+//       context.device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &acceleration_structure_build_geometry_info, &m_spheres.gpu_data.spheres_total,
+//       &acceleration_structure_build_sizes_info
+//   );
+//   VkBufferCreateInfo acc_buffer_info{};
+//   acc_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+//   acc_buffer_info.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+//   acc_buffer_info.size        = acceleration_structure_build_sizes_info.accelerationStructureSize;
+//   acc_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+//   VmaAllocationCreateInfo acc_buffer_alloc{};
+//   acc_buffer_alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+//   check(
+//       vmaCreateBuffer(
+//           context.vma_allocator(),             //
+//           &acc_buffer_info, &acc_buffer_alloc, //
+//           &m_spheres.blas.buffer.handle, &m_spheres.blas.buffer.allocation, nullptr
+//       ),
+//       "creating buffer for spheres blas"
+//   );
+//   context.set_debug_name(m_spheres.blas.buffer.handle, fmt::format("spheres blas buffer"));
+//   // Create the acceleration structure
+//   VkAccelerationStructureCreateInfoKHR acceleration_structure_create_info{};
+//   acceleration_structure_create_info.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+//   acceleration_structure_create_info.buffer = m_spheres.blas.buffer.handle;
+//   acceleration_structure_create_info.size   = acceleration_structure_build_sizes_info.accelerationStructureSize;
+//   acceleration_structure_create_info.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+//   check(vkCreateAccelerationStructureKHR(context.device(), &acceleration_structure_create_info, nullptr, &m_spheres.blas.handle));
+//   // The actual build process starts here
+//   buffer_t           scratch_buffer = {};
+//   VkBufferCreateInfo scratch_buffer_info{};
+//   scratch_buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+//   scratch_buffer_info.usage       = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+//   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT; scratch_buffer_info.size        = acceleration_structure_build_sizes_info.buildScratchSize;
+//   scratch_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+//   VmaAllocationCreateInfo scratch_buffer_alloc = {};
+//   scratch_buffer_alloc.usage                   = VMA_MEMORY_USAGE_CPU_TO_GPU;
+//   check(
+//       vmaCreateBuffer(
+//           context.vma_allocator(),                     //
+//           &scratch_buffer_info, &scratch_buffer_alloc, //
+//           &scratch_buffer.handle, &scratch_buffer.allocation, nullptr
+//       ),
+//       "creating scratch buffer for spheres blas"
+//   );
+//   VkAccelerationStructureBuildGeometryInfoKHR acceleration_build_geometry_info{};
+//   acceleration_build_geometry_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+//   acceleration_build_geometry_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+//   acceleration_build_geometry_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+//   acceleration_build_geometry_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+//   acceleration_build_geometry_info.dstAccelerationStructure  = m_spheres.blas.handle;
+//   acceleration_build_geometry_info.geometryCount             = 1;
+//   acceleration_build_geometry_info.pGeometries               = &acceleration_structure_geometry;
+//   acceleration_build_geometry_info.scratchData.deviceAddress = context.get_buffer_device_address(scratch_buffer.handle);
+//   VkAccelerationStructureBuildRangeInfoKHR acceleration_structure_build_range_info{};
+//   acceleration_structure_build_range_info.firstVertex     = 0;
+//   acceleration_structure_build_range_info.primitiveCount  = (u32) m_spheres.gpu_data.spheres_total;
+//   acceleration_structure_build_range_info.primitiveOffset = 0;
+//   acceleration_structure_build_range_info.transformOffset = 0;
+//   std::array<VkAccelerationStructureBuildRangeInfoKHR*, 1> acceleration_build_structure_range_infos = { &acceleration_structure_build_range_info };
+//   context.immediate_submit([&](VkCommandBuffer cmd) {
+//     vkCmdBuildAccelerationStructuresKHR(cmd, 1, &acceleration_build_geometry_info, acceleration_build_structure_range_infos.data());
+//   });
+//   vmaDestroyBuffer(context.vma_allocator(), scratch_buffer.handle, scratch_buffer.allocation);
+//   glm::mat3x4          rtxT             = glm::transpose(glm::mat4{ 1.f });
+//   VkTransformMatrixKHR transform_matrix = {};
+//   memcpy(&transform_matrix, glm::value_ptr(rtxT), sizeof(VkTransformMatrixKHR));
+//   auto blas = m_spheres.blas.handle;
+//   VkAccelerationStructureDeviceAddressInfoKHR acceleration_device_address_info{};
+//   acceleration_device_address_info.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+//   acceleration_device_address_info.accelerationStructure = blas;
+//   auto device_address = vkGetAccelerationStructureDeviceAddressKHR(context.device(), &acceleration_device_address_info);
+//   VkAccelerationStructureInstanceKHR blas_instance{};
+//   blas_instance.transform                              = transform_matrix;
+//   blas_instance.instanceCustomIndex                    = m_spheres.desc_index;
+//   blas_instance.mask                                   = 0xFF;
+//   blas_instance.instanceShaderBindingTableRecordOffset = 1;
+//   blas_instance.flags                                  = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+//   blas_instance.accelerationStructureReference         = device_address;
+//   m_blas_instances.push_back(blas_instance);
+//   // Instance creation
+// }
 
 void RayTracer::create_tlas() {
   Context &context = m_context_ref;
@@ -1829,25 +2025,17 @@ void RayTracer::create_tlas() {
   vmaDestroyBuffer(context.vma_allocator(), scratch_buffer.handle, scratch_buffer.allocation);
 }
 
-std::optional<texture_t> RayTracer::create_texture(std::string_view file_name) {
+texture_t RayTracer::create_texture(
+    u32 width, u32 height,            //
+    std::vector<unsigned char> &data, //
+    VkFilter mag_filter, VkFilter min_filter, VkFormat format
+) {
   Context &context = m_context_ref;
 
   texture_t result = {};
-
-  if (!std::filesystem::exists(file_name)) {
-    WERROR("Cant find texture at path - {}", file_name);
-    return {};
-  }
-  int      width = 0, height = 0, channels = 0;
-  stbi_uc* stbi_pixels = stbi_load(file_name.data(), &width, &height, &channels, STBI_rgb_alpha);
-
-  if (stbi_pixels == nullptr) {
-    WERROR("Failed to read texture from file: {}", file_name);
-    return {};
-  }
-
-  result.width  = width;
-  result.height = height;
+  result.width     = width;
+  result.height    = height;
+  result.format    = format;
 
   VkImageCreateInfo image_create_info{};
   image_create_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1863,12 +2051,11 @@ std::optional<texture_t> RayTracer::create_texture(std::string_view file_name) {
   image_create_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
   image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-  size_t data_size = (size_t) result.width * result.height * 4;
-  result.image     = context.create_image_on_gpu(image_create_info, stbi_pixels, data_size);
+  auto* raw_data = data.data();
+  result.image   = context.create_image_on_gpu(image_create_info, raw_data, data.size());
 
-  // generate mipmaps
   context.generate_mipmaps(result.image.handle, image_create_info);
-  // create image view
+
   VkImageViewCreateInfo image_view_create_info{};
   image_view_create_info.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   image_view_create_info.image                           = result.image.handle;
@@ -1884,15 +2071,14 @@ std::optional<texture_t> RayTracer::create_texture(std::string_view file_name) {
       vkCreateImageView(context.device(), &image_view_create_info, nullptr, &result.view), //
       "creating view for texture"
   );
-  // create sampler
 
   VkPhysicalDeviceProperties properties{};
   vkGetPhysicalDeviceProperties(context.physical_device(), &properties);
 
   VkSamplerCreateInfo sampler_create_info{};
   sampler_create_info.sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  sampler_create_info.magFilter               = VK_FILTER_NEAREST;
-  sampler_create_info.minFilter               = VK_FILTER_NEAREST;
+  sampler_create_info.magFilter               = mag_filter;
+  sampler_create_info.minFilter               = min_filter;
   sampler_create_info.addressModeU            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   sampler_create_info.addressModeV            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   sampler_create_info.addressModeW            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -1912,11 +2098,6 @@ std::optional<texture_t> RayTracer::create_texture(std::string_view file_name) {
       vkCreateSampler(context.device(), &sampler_create_info, nullptr, &result.sampler), //
       "creating sampler for texture"
   );
-
-  context.set_debug_name(result.image.handle, fmt::format("texture {}", file_name));
-  context.set_debug_name(result.view, fmt::format("texture view {}", file_name));
-
-  stbi_image_free(stbi_pixels);
 
   return result;
 }

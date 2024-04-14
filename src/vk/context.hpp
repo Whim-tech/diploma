@@ -66,6 +66,7 @@ public:
 
   VkShaderModule create_shader_module(std::string_view file_path) const;
 
+
   void transition_image(
       VkCommandBuffer cmd, VkImage image, //
       VkImageLayout currentLayout, VkImageLayout newLayout

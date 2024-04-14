@@ -43,23 +43,6 @@ void CameraManipulator::update() {
   // right direction
   glm::vec3 axe_x = glm::normalize(glm::cross(m_camera.up, axe_z));
 
-  if (keyboard.forward_button) {
-    m_camera.eye += axe_z * m_speed * dt;
-    m_camera.center += axe_z * m_speed * dt;
-  }
-  if (keyboard.back_button) {
-    m_camera.eye -= axe_z * m_speed * dt;
-    m_camera.center -= axe_z * m_speed * dt;
-  }
-  if (keyboard.right_button) {
-    m_camera.eye += axe_x * m_speed * dt;
-    m_camera.center += axe_x * m_speed * dt;
-  }
-  if (keyboard.left_button) {
-    m_camera.eye -= axe_x * m_speed * dt;
-    m_camera.center -= axe_x * m_speed * dt;
-  }
-
   if ((mouse.mouse_dx != 0 or mouse.mouse_dy != 0) and mouse.right_mouse_button) {
     // Full width will do a full turn
     f32 dx = mouse.mouse_dx * glm::two_pi<f32>();
@@ -82,6 +65,24 @@ void CameraManipulator::update() {
 
     m_camera.center = new_pos;
   }
+  
+  if (keyboard.forward_button) {
+    m_camera.eye += axe_z * m_speed * dt;
+    m_camera.center += axe_z * m_speed * dt;
+  }
+  if (keyboard.back_button) {
+    m_camera.eye -= axe_z * m_speed * dt;
+    m_camera.center -= axe_z * m_speed * dt;
+  }
+  if (keyboard.right_button) {
+    m_camera.eye += axe_x * m_speed * dt;
+    m_camera.center += axe_x * m_speed * dt;
+  }
+  if (keyboard.left_button) {
+    m_camera.eye -= axe_x * m_speed * dt;
+    m_camera.center -= axe_x * m_speed * dt;
+  }
+
 
   update_view();
 }

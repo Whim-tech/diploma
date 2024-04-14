@@ -10,44 +10,24 @@
 #include "vk/context.hpp"
 #include "shader.h"
 
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#include "tiny_gltf.h"
+
 #include "vk/types.hpp"
 #include "whim.hpp"
 
-struct material_options {
-  glm::vec3   color        = {};
-  std::string texture_name = {};
+namespace whim::vk {
+struct primitive_full_info {
+  u32 index_count    = 0;
+  u32 index_offset   = 0;
+  u32 vertex_count   = 0;
+  u32 vertex_offset  = 0;
+  u32 material_index = 0;
 };
 
-namespace whim::vk {
-
-class Mesh {
-public:
-  struct raw_data {
-    std::vector<vertex>      vertexes{};
-    std::vector<u32>         indices{};
-    std::vector<material>    materials{};
-    std::vector<u32>         mat_indices{};
-    std::vector<std::string> texture_names{};
-  } raw;
-
-  struct gpu_data {
-    u32 vertex_count = 0;
-    u32 index_count  = 0;
-
-    buffer_t index          = {};
-    buffer_t vertex         = {};
-    buffer_t material       = {};
-    buffer_t material_index = {};
-  } gpu;
-
-  struct blas_data {
-    handle<VkAccelerationStructureKHR> handle = VK_NULL_HANDLE;
-    buffer_t                           buffer = {};
-  } blas;
-
-  // index in array of descriptions
-  // see m_descriptions in class below
-  size_t description_index = 0;
+struct node {
+  glm::mat4 world_matrix   = glm::mat4{ 1.f };
+  int       primitive_mesh = 0;
 };
 
 class RayTracer {
@@ -62,13 +42,9 @@ public:
   RayTracer &operator=(const RayTracer &)     = delete;
 
   void draw();
-  // loads data from file to mesh struct
-  void load_mesh(std::string_view file_path, std::string_view mesh_name);
-  // uploads mesh to a scene
-  void load_model(std::string_view mesh_name, glm::mat4 transform = glm::mat4{ 1.f });
 
-  void load_spheres(std::vector<std::pair<sphere_t, u32>> &spheres, std::vector<material_options> &materials);
-  void init_scene();
+  void load_gltf_scene(std::string_view file_path);
+  // void load_spheres(std::vector<std::pair<sphere_t, u32>> &spheres, std::vector<material_options> &materials);
 
   void reset_frame();
 
@@ -97,10 +73,10 @@ private:
   void create_default_texture();
   void create_offscreen_renderer();
 
-  void load_obj_file(std::string_view file_path, Mesh::raw_data &mesh);
-  void load_mesh_to_gpu(Mesh &mesh);
-  void load_textures(Mesh &mesh);
-  void load_mesh_to_blas(Mesh &mesh);
+  void load_gltf_raw(std::string_view file_path);
+  void process_node(const tinygltf::Model &tmodel, int &node_idx, const glm::mat4 &parent_matrix);
+  void load_gltf_device();
+  void load_primitive_to_blas(primitive_full_info &primitive, acceleration_structure_t &blas);
 
   void create_tlas();
   void init_descriptors();
@@ -109,7 +85,11 @@ private:
 
   void update_uniform_buffer(VkCommandBuffer cmd);
 
-  std::optional<texture_t> create_texture(std::string_view file_name);
+  texture_t create_texture(
+      u32 width, u32 height,            //
+      std::vector<unsigned char> &data, //
+      VkFilter mag_filter, VkFilter min_filter, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB
+  );
 
 private:
   // IMGUI DATA
@@ -128,39 +108,60 @@ private:
   buffer_t m_ubo = {};
 
   // MESHES DATA
-  std::unordered_map<std::string, Mesh> m_meshes{};
-
   struct {
-    std::vector<mesh_description> data    = {};
-    buffer_t                      buffer  = {};
-    VkDeviceAddress               address = {};
-  } m_description;
-
-  // SPHERES DATA
-  struct {
-    struct raw_data {
-      std::vector<sphere_t>    spheres{};
-      std::vector<aabb_t>      aabbs{};
-      std::vector<material>    materials{};
-      std::vector<u32>         mat_indices{};
-      std::vector<std::string> texture_names{};
+    struct {
+      std::vector<glm::vec3>             positions{};
+      std::vector<u32>                   indices{};
+      std::vector<glm::vec3>             normals{};
+      std::vector<glm::vec2>             uvs{};
+      std::vector<material>              materials{};
+      std::vector<primitive_shader_info> prim_meshes{};
+      //
+      std::vector<primitive_full_info>          primitive_infos{};
+      std::vector<node>                         nodes{};
+      std::unordered_map<i32, std::vector<u32>> mesh_to_primitives{};
     } raw;
 
     struct {
-      buffer_t spheres        = {};
-      buffer_t aabbs          = {};
-      buffer_t material       = {};
-      buffer_t material_index = {};
-      u32      spheres_total  = 0;
-    } gpu_data;
+      buffer_t pos_buffer      = {};
+      buffer_t index_buffer    = {};
+      buffer_t normal_buffer   = {};
+      buffer_t uv_buffer       = {};
+      buffer_t material_buffer = {};
+      buffer_t prim_infos      = {};
+    } device;
 
-    struct blas_data {
-      handle<VkAccelerationStructureKHR> handle = VK_NULL_HANDLE;
-      buffer_t                           buffer = {};
-    } blas;
+    std::vector<acceleration_structure_t> blases{};
+  } m_meshes;
 
-    u32 desc_index = 0;
-  } m_spheres;
+  struct {
+    std::vector<scene_description> data    = {};
+    buffer_t                       buffer  = {};
+    VkDeviceAddress                address = {};
+  } m_description;
+
+  // SPHERES DATA
+  // struct {
+  //   struct raw_data {
+  //     std::vector<sphere_t>    spheres{};
+  //     std::vector<aabb_t>      aabbs{};
+  //     std::vector<material>    materials{};
+  //     std::vector<u32>         mat_indices{};
+  //     std::vector<std::string> texture_names{};
+  //   } raw;
+  //   struct {
+  //     buffer_t spheres        = {};
+  //     buffer_t aabbs          = {};
+  //     buffer_t material       = {};
+  //     buffer_t material_index = {};
+  //     u32      spheres_total  = 0;
+  //   } gpu_data;
+  //   struct blas_data {
+  //     handle<VkAccelerationStructureKHR> handle = VK_NULL_HANDLE;
+  //     buffer_t                           buffer = {};
+  //   } blas;
+  //   u32 desc_index = 0;
+  // } m_spheres;
 
   // TEXTURES DATA
   std::vector<texture_t> m_textures{};

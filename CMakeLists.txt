@@ -40,6 +40,11 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/external/glm")
 
 add_subdirectory("${PROJECT_SOURCE_DIR}/external/tinyobjloader")
 
+set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "" FORCE)
+set(TINYGLTF_INSTALL OFF CACHE INTERNAL "" FORCE)
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
+add_subdirectory("${PROJECT_SOURCE_DIR}/external/tinygltf")
+
 add_executable(main)
 target_compile_options(main PRIVATE ${WHIM_DEFAULT_COMPILE_OPTIONS})
 target_compile_features(main PRIVATE ${WHIM_DEFAULT_COMPILE_FEATURE})
@@ -64,6 +69,7 @@ target_link_libraries(main PRIVATE
   vk-bootstrap::vk-bootstrap
   glm::glm
   fmt::fmt
+  tinygltf
   GPUOpen::VulkanMemoryAllocator # vma
   tinyobjloader
 )

@@ -26,13 +26,13 @@ struct acceleration_structure_t {
 };
 
 struct texture_t {
-    image_t             image   = {};
-    handle<VkImageView> view    = VK_NULL_HANDLE;
-    handle<VkSampler>   sampler = VK_NULL_HANDLE;
+  image_t             image   = {};
+  handle<VkImageView> view    = VK_NULL_HANDLE;
+  handle<VkSampler>   sampler = VK_NULL_HANDLE;
 
-    VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
-    u32      width  = 0;
-    u32      height = 0;
-  };
+  VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+  u32      width  = 0;
+  u32      height = 0;
+};
 
 } // namespace whim::vk
