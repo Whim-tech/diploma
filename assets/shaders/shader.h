@@ -26,10 +26,11 @@ START_BINDING(SharedBindings)
   TLAS = 0,
   StorageImage = 1,
   UniformBuffer  = 2,  
-  ObjectDescriptions = 3,
-  Textures = 4,
-  Spheres = 5,
-  total = 6
+  SceneDescriptions = 3,
+  Primitives = 4,
+  Textures = 5,
+  Spheres = 6,
+  total = 7
 END_BINDING();
 
 // clang-format on
@@ -51,25 +52,29 @@ struct aabb_t {
 };
 
 struct material {
-  vec3  ambient;
-  vec3  diffuse;
-  vec3  specular;
-  vec3  transmittance;
-  vec3  emission;
-  float shininess;
-  float ior;      // index of refraction
-  float dissolve; // 1 == opaque; 0 == fully transparent
-  // illumination model (see http://www.fileformat.info/format/material/)
-  int illum;
-  int texture_id;
+  vec3  base_color_factor;
+  int   base_color_texture;
+  float roughness_factor;
+  float metallic_factor;
+  int   rm_texture;
+  vec3  emissive_factor;
+  int   e_texture;
+  int   n_texture;
 };
 
-struct mesh_description {
-  int      txt_offset;
-  uint64_t vertex_address;
+struct scene_description {
+  uint64_t pos_address;
+  uint64_t normal_address;
+  uint64_t uv_address;
   uint64_t index_address;
   uint64_t material_address;
-  uint64_t material_index_address;
+  uint64_t prim_info_address;
+};
+
+struct primitive_shader_info {
+  uint index_offset;
+  uint vertex_offset;
+  int  material_index;
 };
 
 struct global_ubo {

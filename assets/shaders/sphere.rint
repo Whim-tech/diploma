@@ -1,45 +1,45 @@
 #version 460
-#extension GL_EXT_ray_tracing : require
-#extension GL_EXT_nonuniform_qualifier : enable
-#extension GL_EXT_scalar_block_layout : enable
-#extension GL_GOOGLE_include_directive : enable
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-#extension GL_EXT_buffer_reference2 : require
+// #extension GL_EXT_ray_tracing : require
+// #extension GL_EXT_nonuniform_qualifier : enable
+// #extension GL_EXT_scalar_block_layout : enable
+// #extension GL_GOOGLE_include_directive : enable
+// #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+// #extension GL_EXT_buffer_reference2 : require
 
-#include "shader.h"
-#include "ray_common.glsl"
+// #include "shader.h"
+// #include "ray_common.glsl"
 
-layout(set = 0, binding = Spheres, scalar) buffer all_spheres { sphere_t spheres[]; };
+// layout(set = 0, binding = Spheres, scalar) buffer all_spheres { sphere_t spheres[]; };
 
-struct ray_t {
-  vec3 origin;
-  vec3 direction;
-};
+// struct ray_t {
+//   vec3 origin;
+//   vec3 direction;
+// };
 
-// Ray-Sphere intersection
-// http://viclw17.github.io/2018/07/16/raytracing-ray-sphere-intersection/
-float hit_sphere(const sphere_t s, const ray_t r) {
-  vec3  oc           = r.origin - s.center;
-  float a            = dot(r.direction, r.direction);
-  float b            = 2.0 * dot(oc, r.direction);
-  float c            = dot(oc, oc) - s.radius * s.radius;
-  float discriminant = b * b - 4 * a * c;
-  if (discriminant < 0) {
-    return -1.0;
-  } else {
-    return (-b - sqrt(discriminant)) / (2.0 * a);
-  }
-}
+// // Ray-Sphere intersection
+// // http://viclw17.github.io/2018/07/16/raytracing-ray-sphere-intersection/
+// float hit_sphere(const sphere_t s, const ray_t r) {
+//   vec3  oc           = r.origin - s.center;
+//   float a            = dot(r.direction, r.direction);
+//   float b            = 2.0 * dot(oc, r.direction);
+//   float c            = dot(oc, oc) - s.radius * s.radius;
+//   float discriminant = b * b - 4 * a * c;
+//   if (discriminant < 0) {
+//     return -1.0;
+//   } else {
+//     return (-b - sqrt(discriminant)) / (2.0 * a);
+//   }
+// }
 
 void main() {
-  ray_t ray;
-  ray.origin    = gl_WorldRayOriginEXT;
-  ray.direction = gl_WorldRayDirectionEXT;
+  // ray_t ray;
+  // ray.origin    = gl_WorldRayOriginEXT;
+  // ray.direction = gl_WorldRayDirectionEXT;
 
-  // Sphere data
-  sphere_t sphere = spheres[gl_PrimitiveID];
+  // // Sphere data
+  // sphere_t sphere = spheres[gl_PrimitiveID];
 
-  float t_hit = hit_sphere(sphere, ray);
+  // float t_hit = hit_sphere(sphere, ray);
 
-  if (t_hit > 0) reportIntersectionEXT(t_hit, 0);
+  // if (t_hit > 0) reportIntersectionEXT(t_hit, 0);
 }
