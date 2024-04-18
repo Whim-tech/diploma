@@ -6,7 +6,6 @@
 #include "camera.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/fwd.hpp"
-#include "gltf_loader.hpp"
 #include "input.hpp"
 #include "shader.h"
 #include "vk/raytracer.hpp"
